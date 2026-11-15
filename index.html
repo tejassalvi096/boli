@@ -356,7 +356,7 @@ function vAuth(){
   </div>`; }
 
 function vProfile(){
-  const m = S.me || {}, role = m.role || S.authRole, isNew = !S.me;
+  const m = S.me || {}, role = m.role || (S.user.user_metadata||{}).role || S.authRole, isNew = !S.me;
   const head = `<h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${isNew?(role==='creator'?'Build your creator profile':'Set up your brand'):'Edit your profile'}</h1>`;
   const creator = `<p class="meta">This is what brands see when they look for creators.</p>
     <form id="profForm" class="panel" novalidate>
@@ -574,16 +574,16 @@ document.addEventListener('submit', e=>{
     if(S.authMode==='up' && !$('aTerms').checked) return showErr('aErr','Please agree to the Boli terms to continue.');
     if(S.authMode==='up' && S.authConfirm!==email){ S.authConfirm=email; $('aErr').hidden=true; $('aConfEmail').textContent=email; $('aConfirm').hidden=false; $('aBtn').textContent='Yes, create this account'; return; }
     $('aBtn').disabled = true;
-    const r = S.authMode==='up' ? await sb.auth.signUp({email,password}) : await sb.auth.signInWithPassword({email,password});
+    const r = S.authMode==='up' ? await sb.auth.signUp({email, password, options:{data:{role:S.authRole}, emailRedirectTo:location.origin}}) : await sb.auth.signInWithPassword({email,password});
     $('aBtn').disabled = false;
-    if(r.error) return showErr('aErr', /already registered/i.test(r.error.message)?'That email already has an account. Sign in instead.':/invalid login/i.test(r.error.message)?'That email and password do not match.':r.error.message);
-    if(!r.data.session) return showErr('aErr','Check your email to confirm your account, then sign in.');
+    if(r.error) return showErr('aErr', /already registered/i.test(r.error.message)?'That email already has an account. Sign in instead.':/invalid login/i.test(r.error.message)?'That email and password do not match.':/not confirmed/i.test(r.error.message)?'Please open the confirmation link we emailed you, then sign in.':r.error.message);
+    if(!r.data.session){ $('aConfirm').hidden=true; $('aBtn').hidden=true; return showErr('aErr','We sent a confirmation link to '+email+'. Open it to finish creating your account. If it does not arrive in a few minutes, check your spam folder.'); }
     S.user = r.data.user; await loadAll();
     if(!S.me) return go('profile');
     afterLogin();
   });
   if(id==='profForm') return run(async()=>{
-    const role = S.me ? S.me.role : S.authRole, name=$('pName').value.trim();
+    const role = S.me ? S.me.role : ((S.user.user_metadata||{}).role || S.authRole), name=$('pName').value.trim();
     if(!name) return showErr('pErr', role==='creator'?'Add your name.':'Add your brand name.');
     let row = {id:S.user.id, role, name, city:$('pCity').value};
     if(role==='creator'){
