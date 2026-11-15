@@ -205,7 +205,12 @@ a.pill{text-decoration:none;color:inherit;display:inline-block}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
+const BOOT = {hash: location.hash, recover: /[#&]type=recovery(&|$)/.test(location.hash)};
 const sb = supabase.createClient('https://logstpicpmemtbjuxfvk.supabase.co', 'sb_publishable_HLOMvlYAc6bz--50_Rj6dw_hho3p8vP');
+/* Registered straight away so the PASSWORD_RECOVERY event from a reset link is never missed. No supabase calls are made inside the callback. */
+sb.auth.onAuthStateChange((event, session) => {
+  if(event==='PASSWORD_RECOVERY'){ BOOT.recover = true; if(session && session.user) BOOT.user = session.user; setTimeout(()=>{ if(typeof routeReady!=='undefined' && routeReady){ if(BOOT.user && !S.user) S.user = BOOT.user; go('reset'); } }, 0); }
+});
 const CATS = {food:'Food', home:'Home', fashion:'Fashion', beauty:'Beauty', travel:'Travel', tech:'Apps & tech'};
 const TYPES = {content:'UGC video', collab:'Dedicated post', integration:'Integration', affiliate:'Affiliate'};
 const DEALS = TYPES;
@@ -225,9 +230,9 @@ const PCOLS = 'id,role,name,city,langs,cats,deals,followers,rate,site,created_at
 /* Set this to a real support address to show a contact link in the footer and on the terms page. */
 const SUPPORT_EMAIL = '';
 const TERMS = ['Deals that start on Boli are agreed, delivered and paid through Boli.','Keep all conversation about a deal inside Boli messages. Phone numbers, emails, links and social handles are hidden in messages.','Give accurate details about yourself, your followers and your brand.','Creators own their videos until the brand pays for them. Paid posts carry the paid partnership label.','Boli may charge brands a service fee on each deal. The fee is always shown before a deal is confirmed.','The Boli team can read deal messages and may step in to help or to resolve a dispute.','Taking a deal that started on Boli off the platform can get your account suspended.','Accounts that break these terms can be suspended or removed.'];
-const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms'];
+const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms','forgot','reset'];
 const ACTIVE = ['accepted','sent','approved','paid'];
-const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}};
+const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}, authNote:'', alerts:true, alertsOk:false, pwOpen:false, resendEmail:'', resendUntil:0, forgotSent:''};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -262,6 +267,8 @@ async function loadAll(){
   if(!S.user) return;
   S.me = await q(sb.from('profiles').select(PCOLS).eq('id',S.user.id).maybeSingle());
   if(!S.me) return;
+  S.alerts = true; S.alertsOk = false;
+  try{ const r = await sb.from('profiles').select('email_alerts').eq('id',S.user.id).maybeSingle(); if(!r.error && r.data){ S.alertsOk = true; S.alerts = r.data.email_alerts!==false; } }catch(e){}
   (await q(sb.rpc('creator_stats'))).forEach(r=>{ S.stats[r.creator_id]=r; });
   S.del = {}; (await q(sb.from('deliveries').select('*'))).forEach(d=>{ S.del[d.application_id]=d; });
   if(isCreator()){
@@ -358,6 +365,7 @@ function vAuth(){
   const up = S.authMode==='up';
   return `<div class="sec" style="max-width:520px;margin:0 auto;width:100%">
     <h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${up?'Create your account':'Welcome back'}</h1>
+    ${S.authNote?`<div class="lock" role="status"><b>${esc(S.authNote)}</b></div>`:''}
     <form id="authForm" class="panel" novalidate>
       ${up?`<b>I am joining as</b><div class="chips" data-g="arole">${[['creator','A creator'],['brand','A brand']].map(([k,t])=>`<button type="button" class="pill" data-act="arole" data-k="${k}" aria-pressed="${S.authRole===k}">${t}</button>`).join('')}</div>`:''}
       <label for="aEmail">Email<input id="aEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
@@ -366,7 +374,9 @@ function vAuth(){
       <label for="aTerms" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="aTerms" type="checkbox" style="width:auto"> I agree to the Boli terms</label>`:''}
       <div class="lock" id="aConfirm" hidden><b>Create a new account for <span id="aConfEmail"></span>?</b><span class="meta">Check the spelling of the email. If you already have a Boli account, choose Sign in below.</span></div>
       <p class="meta" id="aErr" hidden></p>
+      <div id="aResend" hidden><button type="button" class="btn wide" data-act="resendConf" id="aResendBtn">Send the confirmation email again</button></div>
       <button class="btn accent wide" type="submit" id="aBtn">${up?'Create account':'Sign in'}</button>
+      ${up?'':'<button type="button" class="link" data-act="nav" data-v="forgot">Forgot password?</button>'}
       <button type="button" class="link" data-act="amode">${up?'Already have an account? Sign in':'New here? Create an account'}</button>
     </form>
     ${up?'<p class="meta">By creating an account you agree that the details you add to your profile are shown to other signed-in members of Boli.</p>':''}
@@ -517,12 +527,56 @@ function vFind(){
   <div>${list.map(c=>`<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b>${vtag(c)}<br><span class="meta">${esc(c.city||'')} · ${(c.cats||[]).map(k=>CATS[k]||k).join(', ')} · ${num(c.followers)} followers · ${(c.langs||[]).join(', ')}${c.rate?' · usually '+rs(c.rate):''}</span><br><span class="meta">${rec(c.id)}</span></div></div>`).join('') || '<p class="meta">No creators match yet.</p>'}</div>
   <p class="meta">To work with a creator, post a brief. When they apply you see their sample video, and their page link is shared once you accept them.</p></div>`; }
 
+function vForgot(){
+  return `<div class="sec" style="max-width:520px;margin:0 auto;width:100%">
+    <button class="link" data-act="auth" data-v="in">‹ Back to sign in</button>
+    <h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Reset your password</h1>
+    <form id="forgotForm" class="panel" novalidate>
+      ${S.forgotSent?`<div class="lock" role="status"><b>If that email has a Boli account, a reset link is on its way.</b><span class="meta">Sent to ${esc(S.forgotSent)}. Check your spam folder if it does not arrive in a few minutes.</span></div>`:'<p class="meta">Enter the email you use for Boli and we will send you a link to choose a new password.</p>'}
+      <label for="rEmail">Email<input id="rEmail" type="email" autocomplete="email" required placeholder="you@example.com" value="${esc(S.forgotSent)}"></label>
+      <p class="meta" id="rErr" hidden></p>
+      <button class="btn accent wide" type="submit" id="rBtn">${S.forgotSent?'Send the link again':'Send reset link'}</button>
+    </form></div>`; }
+function vReset(){
+  return `<div class="sec" style="max-width:520px;margin:0 auto;width:100%">
+    <h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Set a new password</h1>
+    <form id="resetForm" class="panel" novalidate>
+      <p class="meta">Choose a new password for ${esc((S.user&&S.user.email)||'your account')}.</p>
+      <label for="nPass">New password<input id="nPass" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters"></label>
+      <label for="nPass2">Type it again<input id="nPass2" type="password" autocomplete="new-password" minlength="8" required></label>
+      <p class="meta" id="nErr" hidden></p>
+      <button class="btn accent wide" type="submit" id="nBtn">Save new password</button>
+    </form></div>`; }
+const authMsg = m => { m = String(m||''); const w = m.match(/after (\d+) seconds?/i);
+  return w ? 'Please wait '+w[1]+' seconds before asking for another email.'
+    : /rate limit/i.test(m) ? 'Too many emails were requested. Please try again in an hour.'
+    : /different from the old/i.test(m) ? 'Choose a password you have not used before.'
+    : /session/i.test(m) && /missing|expired/i.test(m) ? 'That link has expired. Ask for a new one.'
+    : m || 'Something went wrong. Please try again.'; };
+let resendTimer;
+function resendTick(){
+  const b = $('aResendBtn'); if(!b){ clearInterval(resendTimer); resendTimer = null; return; }
+  const left = Math.ceil((S.resendUntil - Date.now())/1000);
+  if(left > 0){ b.disabled = true; b.textContent = 'Send again in '+left+'s'; }
+  else { b.disabled = false; b.textContent = 'Send the confirmation email again'; clearInterval(resendTimer); resendTimer = null; }
+}
+function showResend(email, wait){
+  S.resendEmail = email; if(wait) S.resendUntil = Date.now() + wait*1000;
+  const box = $('aResend'); if(!box) return; box.hidden = false;
+  clearInterval(resendTimer); resendTimer = setInterval(resendTick, 500); resendTick();
+}
 function vAccount(){
   const m = S.me;
   return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%"><span class="eyebrow">${m.role==='creator'?'Creator account':'Brand account'}</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${esc(m.name)}${vtag(m)}</h1>
     <div class="panel"><div class="kv"><span>Email</span><span>${esc(S.user.email||'')}</span></div><div class="kv"><span>City</span><span>${esc(m.city||'')}</span></div>
     ${m.role==='creator'?`<div class="kv"><span>Languages</span><span>${(m.langs||[]).join(', ')}</span></div><div class="kv"><span>You make</span><span>${(m.cats||[]).map(k=>CATS[k]||k).join(', ')}</span></div><div class="kv"><span>Followers</span><span>${num(m.followers)}</span></div><div class="kv"><span>Track record</span><span>${rec(m.id)}</span></div>`:`<div class="kv"><span>Category</span><span>${CATS[(m.cats||[])[0]]||''}</span></div>`}
     <button class="btn wide" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost wide" data-act="signout">Sign out</button></div>
+    ${S.alertsOk?`<div class="panel"><b>Email alerts</b><p class="meta">We email you when something happens on your deals.</p><div class="chips" style="flex-wrap:wrap;overflow:visible"><button type="button" class="pill" data-act="alerts" data-v="on" aria-pressed="${S.alerts}">On</button><button type="button" class="pill" data-act="alerts" data-v="off" aria-pressed="${!S.alerts}">Off</button></div></div>`:''}
+    <div class="panel"><b>Password</b>${S.pwOpen?`<form id="pwForm" class="sec" novalidate>
+      <label for="cPass">New password<input id="cPass" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters"></label>
+      <label for="cPass2">Type it again<input id="cPass2" type="password" autocomplete="new-password" minlength="8" required></label>
+      <p class="meta" id="cErr" hidden></p>
+      <div class="cta"><button class="btn accent" type="submit" id="cBtn">Save new password</button><button type="button" class="btn ghost" data-act="pwOpen">Cancel</button></div></form>`:'<div><button type="button" class="btn" data-act="pwOpen">Change password</button></div>'}</div>
     ${m.role==='brand'?`<h2>Your plan</h2>
     <div class="lv${m.plan==='payg'?' on':''}"><span><b>Pay per deal</b><br><span class="meta">No monthly charge</span></span><span style="text-align:right"><b>${FEE.payg}%</b><br><span class="meta">fee on each deal</span></span></div>
     <div class="lv${m.plan==='sub'?' on':''}"><span><b>Subscription</b><br><span class="meta">${rs(FEE.subPrice)} a month</span></span><span style="text-align:right"><b>${FEE.sub}%</b><br><span class="meta">fee on each deal</span></span></div>
@@ -558,8 +612,8 @@ function fillForm(){
 function render(){
   keepForm();
   const fa=$('fAsk'); if(fa) S.fa=fa.value;
-  if(S.user && !S.me && S.view!=='profile' && S.view!=='terms') S.view='profile';
-  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome()};
+  if(S.user && !S.me && S.view!=='profile' && S.view!=='terms' && S.view!=='reset') S.view='profile';
+  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, forgot:vForgot, reset:vReset, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome()};
   const need_me = ['work','dash','find','account','thread','admin'];
   if(need_me.includes(S.view) && !S.me) S.view = 'home';
   if(S.view==='admin' && !(S.me && S.me.is_admin)) S.view = 'home';
@@ -588,7 +642,9 @@ async function route(){
     let view = parts[0] || 'home', arg = parts[1] ? decodeURIComponent(parts[1]) : null;
     const to = (v, a) => { view = v; arg = a===undefined ? null : a; setHash(view, arg); };
     if(!ROUTES.includes(view)) to('home');
-    if(S.user && !S.me && view!=='profile' && view!=='terms') to('profile');
+    if(view==='reset' && !S.user){ S.authMode = 'in'; S.authNote = 'Open the reset link from your email again, or ask for a new one below.'; to('auth'); }
+    if(view==='forgot' && S.user) to(S.me ? (isBrand() ? 'dash' : 'home') : 'profile');
+    if(S.user && !S.me && view!=='profile' && view!=='terms' && view!=='reset') to('profile');
     if(view==='profile' && !S.user) to('auth');
     if(view==='auth' && S.user) to(S.me ? (isBrand() ? 'dash' : 'home') : 'profile');
     if(['work','dash','find','account','thread','admin'].includes(view) && !S.me) to(S.user ? 'profile' : 'home');
@@ -607,6 +663,9 @@ async function route(){
       if(seq!==routeSeq) return;
     }
     if(view==='admin') return await openAdmin();
+    if(view!=='auth') S.authNote = '';
+    if(view!=='account') S.pwOpen = false;
+    if(view!=='forgot') S.forgotSent = '';
     S.view = view; S.arg = arg; render(); window.scrollTo(0,0);
   }catch(e){ toast(e.message || 'Something went wrong. Please try again.'); }
 }
@@ -631,7 +690,16 @@ document.addEventListener('click', e=>{
   if(a==='nav') return go(v);
   if(a==='brief') return go('brief', v);
   if(a==='auth'){ S.authMode=v; return go('auth'); }
-  if(a==='amode'){ S.authMode = S.authMode==='up'?'in':'up'; return go('auth'); }
+  if(a==='pwOpen'){ S.pwOpen = !S.pwOpen; render(); const c=$('cPass'); if(c) c.focus(); return; }
+  if(a==='alerts') return run(async()=>{ const on = v==='on'; if(on===S.alerts) return; await q(sb.from('profiles').update({email_alerts:on}).eq('id',S.user.id)); S.alerts = on; render(); toast(on?'Email alerts are on':'Email alerts are off'); });
+  if(a==='resendConf') return run(async()=>{
+    if(!S.resendEmail || Date.now() < S.resendUntil) return;
+    el.disabled = true;
+    const r = await sb.auth.resend({type:'signup', email:S.resendEmail, options:{emailRedirectTo: location.origin + '/'}});
+    if(r.error){ el.disabled = false; const w = String(r.error.message).match(/after (\d+) seconds?/i); if(w) showResend(S.resendEmail, +w[1]); return showErr('aErr', authMsg(r.error.message)); }
+    showResend(S.resendEmail, 60); showErr('aErr', 'Sent again to '+S.resendEmail+'. Check your spam folder too.');
+  });
+  if(a==='amode'){ S.authMode = S.authMode==='up'?'in':'up'; S.authNote=''; return go('auth'); }
   if(a==='join'){ if(S.user) return go(isBrand()?'dash':'home'); S.authRole=v; S.authMode='up'; if(S.view==='brief') S.pend=S.arg; return go('auth'); }
   if(a==='signout') return run(async()=>{ await sb.auth.signOut(); S.user=null; await loadAll(); go('home'); toast('Signed out'); });
   if(a==='apply') return run(async()=>{ if(S.me&&S.me.suspended) throw new Error('This account is suspended. Contact the Boli team.'); await q(sb.from('applications').insert({brief_id:v, creator_id:S.user.id})); await loadAll(); render(); toast('Applied. You will hear back here.'); });
@@ -664,9 +732,34 @@ document.addEventListener('submit', e=>{
     $('aBtn').disabled = true;
     const r = S.authMode==='up' ? await sb.auth.signUp({email, password, options:{data:{role:S.authRole}, emailRedirectTo:location.origin}}) : await sb.auth.signInWithPassword({email,password});
     $('aBtn').disabled = false;
-    if(r.error) return showErr('aErr', /already registered/i.test(r.error.message)?'That email already has an account. Sign in instead.':/invalid login/i.test(r.error.message)?'That email and password do not match.':/not confirmed/i.test(r.error.message)?'Please open the confirmation link we emailed you, then sign in.':r.error.message);
-    if(!r.data.session){ $('aConfirm').hidden=true; $('aBtn').hidden=true; return showErr('aErr','We sent a confirmation link to '+email+'. Open it to finish creating your account. If it does not arrive in a few minutes, check your spam folder.'); }
+    if(r.error) return showErr('aErr', /already registered/i.test(r.error.message)?'That email already has an account. Sign in instead.':/invalid login/i.test(r.error.message)?'That email and password do not match.':/not confirmed/i.test(r.error.message)?(showResend(email, 0), 'Please open the confirmation link we emailed you, then sign in. If you cannot find it, send it again below.'):authMsg(r.error.message));
+    if(!r.data.session){ $('aConfirm').hidden=true; $('aBtn').hidden=true; showResend(email, 60); return showErr('aErr','We sent a confirmation link to '+email+'. Open it to finish creating your account. If it does not arrive in a few minutes, check your spam folder.'); }
+    S.authNote = '';
     S.user = r.data.user; await loadAll();
+    if(!S.me) return go('profile');
+    afterLogin();
+  });
+  if(id==='forgotForm') return run(async()=>{
+    const email=$('rEmail').value.trim();
+    if(!/^\S+@\S+\.\S+$/.test(email)) return showErr('rErr','Enter the email you use for Boli.');
+    $('rBtn').disabled = true;
+    const r = await sb.auth.resetPasswordForEmail(email, {redirectTo: location.origin + '/'});
+    $('rBtn').disabled = false;
+    if(r.error && /after \d+ seconds?|rate limit/i.test(r.error.message)) return showErr('rErr', authMsg(r.error.message));
+    S.forgotSent = email; render();
+  });
+  if(id==='resetForm' || id==='pwForm') return run(async()=>{
+    const reset = id==='resetForm', p1=$(reset?'nPass':'cPass').value, p2=$(reset?'nPass2':'cPass2').value, err=reset?'nErr':'cErr', btn=$(reset?'nBtn':'cBtn');
+    if(p1.length<8) return showErr(err,'Use at least 8 characters.');
+    if(p1!==p2) return showErr(err,'The two passwords do not match.');
+    btn.disabled = true;
+    const r = await sb.auth.updateUser({password:p1});
+    btn.disabled = false;
+    if(r.error) return showErr(err, authMsg(r.error.message));
+    toast('Password updated');
+    if(!reset){ S.pwOpen = false; return render(); }
+    BOOT.recover = false; if(r.data && r.data.user) S.user = r.data.user;
+    await loadAll();
     if(!S.me) return go('profile');
     afterLogin();
   });
@@ -733,7 +826,11 @@ function afterLogin(){ const p=S.pend; S.pend=null; if(p && isCreator()) return 
     await loadAll();
   }catch(e){ $('view').innerHTML = '<p class="meta">Boli could not load. Check your connection and refresh the page.</p>'; return; }
   routeReady = true;
-  if(!location.hash.startsWith('#/')) setHash(S.user && S.me && isBrand() ? 'dash' : 'home');
+  const linkErr = /[#&]error(_code|_description)?=/.test(BOOT.hash), fromConfirm = /[#&]type=(signup|email|invite)(&|$)/.test(BOOT.hash);
+  if(linkErr && !S.user){ S.authMode = 'in'; S.authNote = 'That link has expired or was already used. Sign in, or ask for a new link below.'; setHash('auth'); }
+  else if(BOOT.recover && S.user) setHash('reset');
+  else if(!location.hash.startsWith('#/')) setHash(S.user && S.me && isBrand() ? 'dash' : 'home');
+  if(fromConfirm && S.user && !linkErr) setTimeout(()=>toast('Email confirmed. Welcome to Boli.'), 300);
   window.addEventListener('hashchange', route);
   route();
 })();
