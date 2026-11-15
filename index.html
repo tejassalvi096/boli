@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="robots" content="noindex">
-<meta name="description" content="Boli prototype: a regional-language marketplace where brands and creators find each other. A product by Our Dreamwork.">
-<style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
-<title>Boli — brands and creators, in Marathi</title>
-</head><body>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Boli · Where brands and creators find each other</title>
+<meta name="description" content="Boli connects brands with regional-language creators. Starting with Marathi.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=DM+Sans:wght@400;500;600&display=swap">
 <style>
 /* Layout: calm creator-platform look. Big type hero with a fan of reel covers, one open-briefs grid of portrait
@@ -160,13 +160,6 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
 .stat b{display:block;font-family:var(--display);font-size:1.35rem;letter-spacing:-.02em}
 .stat span{font-size:.8rem;color:var(--muted)}
 .lock{border:1.5px dashed var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px}
-.sum{background:var(--bg);border-radius:16px;padding:4px 14px}
-.sum .kv:last-child{border-bottom:0}
-.sum .kv b{font-size:1.1rem}
-.checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
-.checks li{padding-left:26px;position:relative}
-.checks li::before{content:'✓';position:absolute;left:4px;color:var(--ok);font-weight:700}
-.star{color:var(--ink);font-weight:600}
 /* dock */
 .dock{position:fixed;left:0;right:0;bottom:0;z-index:6;display:flex;justify-content:center;padding:0 max(16px,env(safe-area-inset-right,0px)) calc(14px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));pointer-events:none}
 .dock div{pointer-events:auto;display:flex;gap:4px;background:var(--ink);border-radius:999px;padding:6px;box-shadow:0 14px 34px -12px color-mix(in oklab,var(--cover-deep) 60%,transparent)}
@@ -175,21 +168,20 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
 .dock em{font-style:normal;background:var(--accent);color:var(--on-accent);border-radius:999px;font-size:.72rem;padding:1px 7px;margin-left:6px}
 @media (min-width:820px){ .dock{display:none} main{padding-bottom:80px} }
 .toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 74px);background:var(--ink);color:var(--bg);padding:9px 18px;border-radius:999px;font-size:.9rem;font-weight:600;z-index:9;max-width:calc(100% - 32px)}
-</style>
 
+html{-webkit-text-size-adjust:100%} body{margin:0} [hidden]{display:none!important} img{max-width:100%}
+a.pill{text-decoration:none;color:inherit;display:inline-block}
+.seg button[aria-pressed="false"]{color:var(--ink)}
+#msgForm input{flex:1}
+</style>
+</head>
+<body>
 <header><div class="in">
   <div class="hd">
     <button class="logo" data-act="home" aria-label="Boli home">boli<i>.</i></button>
     <button class="lang" id="locBtn" data-act="langs" aria-expanded="false">Marathi ▾</button>
-    <nav class="dnav" aria-label="Sections">
-      <button class="nv" data-act="tab" data-v="home">Briefs</button>
-      <button class="nv" data-act="tab" data-v="learn">Learn</button>
-      <button class="nv" data-act="tab" data-v="earn">My work</button>
-    </nav>
-    <div class="seg" role="group" aria-label="View">
-      <button id="roleCreator" data-act="role" data-v="creator">Creator</button>
-      <button id="roleBrand" data-act="role" data-v="brand">Brand</button>
-    </div>
+    <nav class="dnav" id="dnav" aria-label="Sections"></nav>
+    <div class="seg" id="acct"></div>
   </div>
   <div class="langs" id="langs" hidden>
     <button class="pill" aria-pressed="true">Marathi</button>
@@ -201,538 +193,400 @@ input,select,textarea{background:var(--bg);border:1px solid var(--line);border-r
   </div>
 </div></header>
 
-<div class="in"><main id="view"></main></div>
-<nav class="dock" id="dock" aria-label="Creator sections"><div>
-  <button class="nv" data-act="tab" data-v="home">Briefs</button>
-  <button class="nv" data-act="tab" data-v="learn">Learn</button>
-  <button class="nv" data-act="tab" data-v="earn">My work<em id="dockN" hidden></em></button>
-</div></nav>
+<div class="in"><main id="view"><p class="meta">Loading…</p></main></div>
+<nav class="dock" id="dock" aria-label="Sections" hidden><div id="dockIn"></div></nav>
 <div class="toast" id="toast" role="status" hidden></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
+const sb = supabase.createClient('https://logstpicpmemtbjuxfvk.supabase.co', 'sb_publishable_HLOMvlYAc6bz--50_Rj6dw_hho3p8vP');
 const CATS = {food:'Food', home:'Home', fashion:'Fashion', beauty:'Beauty', travel:'Travel', tech:'Apps & tech'};
+const TYPES = {collab:'Collaboration', content:'Content only', affiliate:'Affiliate'};
+const DEALS = {collab:'Collaboration', content:'Content only', affiliate:'Affiliate'};
+const CITIES = ['Mumbai','Thane','Pune','Nashik','Nagpur','Kolhapur','Chhatrapati Sambhajinagar','Solapur','Satara','Sangli','Ratnagiri','Sindhudurg','Raigad','Ahilyanagar','Jalgaon','Amravati','Other'];
+const LANGS = ['Marathi','Hindi','English'];
 const STD = ['Show the product clearly in the first 3 seconds.','Shoot it your own way, in your own language.','Say what you honestly thought of it.'];
-const BRIEFS = [
-  {id:'b1', brand:'Sahyadri Masale', city:'All Maharashtra', cat:'food', title:'Cook your everyday sabzi with our goda masala', pay:1500, days:2, secs:30, gives:'250 g masala delivered + ₹1,500'},
-  {id:'b3', brand:'Nauvari Studio', city:'Pune', cat:'fashion', title:'Drape a ready-to-wear nauvari in 2 minutes', pay:2500, days:9, secs:60, gives:'Saree on loan + ₹2,500'},
-  {id:'b7', brand:'Ghat Trails Homestay', city:'Mahabaleshwar', cat:'travel', title:'A weekend at our strawberry farm stay', pay:4000, days:14, secs:60, gives:'One night stay + ₹4,000'},
-  {id:'b6', brand:'Misal Junction', city:'Nashik', cat:'food', title:'Your honest first bite of our tarri misal', pay:1000, days:1, secs:20, gives:'Free misal + ₹1,000'},
-  {id:'b5', brand:'Aarsa Herbals', city:'Nashik', cat:'beauty', title:'Our utna before the festival', pay:1800, days:12, secs:30, gives:'Utna pack + ₹1,800'},
-  {id:'b4', brand:'Gruhini Kitchenware', city:'All Maharashtra', cat:'home', title:'Roll puran poli on our polpat-latna set', pay:1200, days:3, secs:30, gives:'Keep the set + ₹1,200'},
-  {id:'b8', brand:'Dabba App', city:'Pune', cat:'tech', title:'Order a home-style tiffin and show how it works', pay:1500, days:5, secs:30, gives:'3 free tiffins + ₹1,500'},
-  {id:'b2', brand:'Konkan Katta', city:'Thane', cat:'food', title:'Bring your family for our fish thali', pay:2000, days:6, secs:45, gives:'Meal for two + ₹2,000'},
-  {id:'b9', brand:'Paithani Lane', city:'Nashik', cat:'fashion', title:'Style one dupatta three ways', pay:2200, days:8, secs:45, gives:'Keep the dupatta + ₹2,200'},
-  {id:'b10', brand:'Swaad Pickles', city:'All Maharashtra', cat:'food', title:'Your tiffin with our mango pickle', pay:900, days:4, secs:20, gives:'Two jars + ₹900'}
-];
-const MODS = [
-  {t:'Find your topic', l:['What are you already good at?','Who is watching?','Your first 10 video ideas']},
-  {t:'Shooting on your phone', l:['Use window light','Clean sound without a mic','Framing and where to keep the phone']},
-  {t:'Talking to camera', l:['The first 3 seconds','Speak the way you speak at home','What to do when you fumble']},
-  {t:'Editing on your phone', l:['Cut and join clips','Text and subtitles in your language','Music and its rules']},
-  {t:'Working with a brand brief', l:['How to read a brief','Sending the video and handling changes','Why brands give repeat work']},
-  {t:'Money, contracts and rules', l:['Setting your rate','The paid partnership label','UPI payouts and keeping accounts']}
-];
-const CREATORS = [
-  {n:'Meera Joshi', c:'Nashik', f:'820', cat:'food', t:'Food, home'},
-  {n:'Omkar Kadam', c:'Kolhapur', f:'2,100', cat:'travel', t:'Food, travel'},
-  {n:'Prajakta Deshmukh', c:'Pune', f:'640', cat:'fashion', t:'Fashion, beauty'},
-  {n:'Sayali Rane', c:'Ratnagiri', f:'1,400', cat:'home', t:'Home, cooking'},
-  {n:'Rohan Shinde', c:'Nagpur', f:'310', cat:'tech', t:'Apps & tech'},
-  {n:'Asha Pawar', c:'Satara', f:'95', cat:'beauty', t:'Beauty, home'}
-];
-let ME = 820;
-const TYPES = {collab:'Collaboration', content:'Content only'};
-const EXTRA = {b1:['content',0],b3:['collab',5000],b7:['collab',10000],b6:['content',0],b5:['collab',1000],b4:['content',0],b8:['collab',500],b2:['collab',1000],b9:['content',0],b10:['content',0]};
-BRIEFS.forEach(b=>{ [b.type,b.minF] = EXTRA[b.id]; });
-CREATORS.push({n:'Tanvi Kulkarni', c:'Pune', f:'12,400', cat:'beauty', t:'Beauty, fashion'},{n:'Sagar Bhosale', c:'Mumbai', f:'48,000', cat:'food', t:'Food, travel'});
-CREATORS.forEach(c=>{ c.fn = +c.f.replace(/,/g,''); });
-const need = b => b.minF ? b.minF.toLocaleString('en-IN')+'+ followers' : 'Any follower count';
-const ok = b => ME >= b.minF;
-TYPES.affiliate = 'Affiliate';
-const LV = [{n:'Starter',at:0,c:10,r:0},{n:'Rising',at:2500,c:12,r:1000},{n:'Partner',at:10000,c:15,r:3000}];
-Object.assign(BRIEFS.find(b=>b.id==='b1'), {type:'affiliate', comm:10, lv:LV, minV:4, title:'Sell our goda masala your way', gives:'250 g masala delivered', hooks:['“My aai’s sabzi never tasted like this until…”','“One spoon. That is the whole recipe.”','“₹60 masala against my usual. Honest taste test.”'], challenge:{t:'Sell ₹5,000 by 30 November', bonus:1000}});
-Object.assign(BRIEFS.find(b=>b.id==='b10'), {type:'affiliate', comm:15, gives:'Two jars', hooks:['“The pickle my tiffin was missing.”','“I hid this jar from my family.”']});
-BRIEFS.find(b=>b.id==='b3').hooks = ['“Nauvari in 2 minutes. No pins, no help.”','“I wore this to a wedding and nobody guessed.”'];
-const REP = [
-  {er:6.8,real:72,lang:[68,22,10],intent:9,tone:'Warm',pw:4,sp:'+12%',top:'Recipes, kitchen tips'},
-  {er:4.1,real:58,lang:[55,35,10],intent:6,tone:'Warm',pw:3,sp:'-8%',top:'Street food, weekend trips'},
-  {er:7.5,real:66,lang:[61,24,15],intent:11,tone:'Warm',pw:5,sp:'+4%',top:'Saree draping, festive looks'},
-  {er:5.2,real:70,lang:[74,18,8],intent:7,tone:'Warm',pw:2,sp:'+9%',top:'Konkan cooking, home care'},
-  {er:8.9,real:61,lang:[49,31,20],intent:5,tone:'Neutral',pw:3,sp:'No sponsored posts yet',top:'App walkthroughs'},
-  null,
-  {er:3.4,real:44,lang:[38,42,20],intent:4,tone:'Neutral',pw:6,sp:'-15%',top:'Makeup, hauls'},
-  {er:2.6,real:39,lang:[30,45,25],intent:3,tone:'Mixed',pw:7,sp:'-22%',top:'Restaurant reviews'}
-];
-CREATORS.forEach((c,i)=>{ c.rep = REP[i]; });
-const HIST = [[4.9,14],[4.6,6],[4.8,9],[4.7,11],[null,0],[null,0],[4.5,22],[4.9,31]];
-CREATORS.forEach((c,i)=>{ [c.rt,c.jobs] = HIST[i]; });
-const topC = c => c.jobs>=10 && c.rt>=4.7;
-const hist = c => c.jobs ? `<span class="star">★ ${c.rt}</span> · ${c.jobs} Boli jobs${topC(c)?' <span class="tag">Top Boli creator</span>':''}` : 'New on Boli';
-const FEE1 = 10, FEE2 = 5;
-const feeFor = ci => (S.jobs[ci]||0)>=2 ? FEE2 : FEE1;
-const pairNote = ci => { const n=S.jobs[ci]||0; return n>=2 ? `${n} jobs together · your fee ${FEE2}%` : n===1 ? `1 job together · fee drops to ${FEE2}% from the 3rd` : `Your fee ${FEE1}%`; };
+const STEPS = ['Applied','Accepted','Video sent','Approved','Paid'];
+const STEP_AT = {applied:1, accepted:2, sent:3, approved:4, paid:5};
 const TPL = {simple:'Fixed fee', affiliate:'Commission', full:'Full programme'};
 const TPLD = {simple:'Pay a set amount for each approved video.', affiliate:'Pay a share of every sale a creator brings through their code.', full:'Commission with levels, a retainer for top sellers and a bonus challenge.'};
-const payLabel = b => b.type==='affiliate' ? b.comm+'% a sale' : rs(b.pay);
-const lvIdx = b => { const s=S.sales[b.id]||0; return (b.lv||[{at:0}]).filter(l=>s>=l.at).length-1; };
-const TOTAL = MODS.length * 3;
-const S = {role:'creator', tab:'home', brief:null, cat:null, type:null, bf:0, q:'', status:{}, enrolled:false, paying:false, done:{}, open:0, posted:[], short:{}, sales:{}, tpl:'simple', creator:null, unlocked:{}, credits:3, plan:'free', jobs:{0:2}, fp:1500, fn:10, fb:'', fa:'', cu:null, bu:null, onb:null, earned:0, pend:null, draft:null, samp:{}, sampSent:null, adreq:{}, ad:{}, ms:0, pair:0, flt:{type:'', city:'', sort:'soon', mine:false, ccat:'', ccity:'', clang:'', cfol:'0', ceng:'0', csort:'fol'}};
+const DEF = {type:'', city:'', sort:'new', mine:false, ccat:'', ccity:'', clang:'', cfol:'0', csort:'fol'};
+const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:''};
 
 const $ = id => document.getElementById(id);
-const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const rs = n => '₹' + Number(n).toLocaleString('en-IN');
-const ini = s => s.split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();
-const left = d => d===1 ? 'Closes tomorrow' : d+' days left';
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const rs = n => '₹' + Number(n||0).toLocaleString('en-IN');
+const num = n => Number(n||0).toLocaleString('en-IN');
+const ini = s => String(s||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();
+const url = u => /^https?:\/\//i.test(u||'') ? u : '';
+const same = (a,b) => String(a)===String(b);
+const daysLeft = b => Math.max(0, Math.ceil((new Date(b.closes_on+'T23:59:59') - Date.now())/864e5));
+const left = d => d<=0 ? 'Closes today' : d===1 ? 'Closes tomorrow' : d+' days left';
+const need = b => b.min_followers ? num(b.min_followers)+'+ followers' : 'Any follower count';
+const payLabel = b => b.type==='affiliate' ? b.comm+'% a sale' : rs(b.pay);
+const isCreator = () => S.me && S.me.role==='creator';
+const isBrand = () => S.me && S.me.role==='brand';
+const ok = b => !isCreator() || S.me.followers >= b.min_followers;
+const hue = c => CATS[c] ? c : 'home';
 let toastTimer;
-function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>{t.hidden=true},2400); }
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>{t.hidden=true},3200); }
 
-const cover = (b, tag) => `<${tag||'button'} class="cover t-${b.cat}" ${tag?'aria-hidden="true"':`data-act="brief" data-v="${b.id}" aria-label="Open brief from ${esc(b.brand)}"`}>
-  <span class="glass">${TYPES[b.type]}</span><span class="cv"><b>${payLabel(b)}</b><span>${esc(b.brand)}</span></span></${tag||'button'}>`;
-const card = b => `<article class="bc">${cover(b)}
+/* ---------- data ---------- */
+async function q(p){ const {data,error} = await p; if(error) throw new Error(error.message); return data; }
+async function loadAll(){
+  S.briefs = await q(sb.from('briefs').select('*').eq('status','open').order('created_at',{ascending:false}));
+  S.me = null; S.apps = []; S.mine = []; S.creators = [];
+  if(!S.user) return;
+  S.me = await q(sb.from('profiles').select('*').eq('id',S.user.id).maybeSingle());
+  if(isCreator()) S.apps = await q(sb.from('applications').select('*, briefs(*)').eq('creator_id',S.user.id).order('created_at',{ascending:false}));
+  if(isBrand()){
+    S.mine = await q(sb.from('briefs').select('*, applications(*, profiles(*))').eq('brand_id',S.user.id).order('created_at',{ascending:false}));
+    S.creators = await q(sb.from('profiles').select('*').eq('role','creator').order('followers',{ascending:false}));
+  }
+}
+const briefById = id => S.briefs.find(b=>b.id===id) || (S.apps.find(a=>a.brief_id===id)||{}).briefs || S.mine.find(b=>b.id===id);
+const myApp = briefId => S.apps.find(a=>a.brief_id===briefId);
+function findApp(id){ for(const b of S.mine){ const a=(b.applications||[]).find(x=>x.id===id); if(a) return {a, b, other:(a.profiles||{}).name}; } const a=S.apps.find(x=>x.id===id); return a ? {a, b:a.briefs, other:a.briefs.brand_name} : null; }
+
+/* ---------- shared pieces ---------- */
+const cover = (b, tag) => `<${tag||'button'} class="cover t-${hue(b.cat)}" ${tag?'aria-hidden="true"':`data-act="brief" data-v="${b.id}" aria-label="Open brief from ${esc(b.brand_name)}"`}>
+  <span class="glass">${TYPES[b.type]}</span><span class="cv"><b>${payLabel(b)}</b><span>${esc(b.brand_name)}</span></span></${tag||'button'}>`;
+const card = b => { const a = myApp(b.id); return `<article class="bc">${cover(b)}
   <button class="bc-t" data-act="brief" data-v="${b.id}">${esc(b.title)}</button>
-  <div class="row"><span class="meta">${esc(b.city)} · ${need(b)}</span>${S.status[b.id]?`<span class="tag">${S.status[b.id]==='joined'?'Joined':'Applied'}</span>`:''}</div></article>`;
+  <div class="row"><span class="meta">${esc(b.city)} · ${need(b)}</span>${a?`<span class="tag">${STEPS[STEP_AT[a.status]-1]||'Not selected'}</span>`:''}</div></article>`; };
+const track = s => `<div class="track" style="grid-template-columns:repeat(5,1fr)">${STEPS.map((x,k)=>`<span class="${k<(STEP_AT[s]||0)?'on':''}">${x}</span>`).join('')}</div>`;
+const chipsPick = (g, opts, on) => `<div class="chips" style="flex-wrap:wrap;overflow:visible" data-g="${g}">${opts.map(([k,t])=>`<button type="button" class="pill" data-act="pick" data-k="${esc(k)}" aria-pressed="${(on||[]).includes(k)}">${esc(t)}</button>`).join('')}</div>`;
+const picked = g => [...document.querySelectorAll(`[data-g="${g}"] [aria-pressed="true"]`)].map(e=>e.dataset.k);
+const opts = (list, cur) => list.map(([v,t])=>`<option value="${esc(v)}"${same(v,cur)?' selected':''}>${esc(t)}</option>`).join('');
 
-function gridHTML(){
-  const q = S.q.trim().toLowerCase(), F = S.flt;
-  const list = BRIEFS.filter(b => (!S.cat || b.cat===S.cat) && (!F.type || b.type===F.type) && (!F.city || b.city===F.city || b.city==='All Maharashtra') && (!F.mine || ok(b)) && (!q || (b.title+' '+b.brand+' '+b.city+' '+CATS[b.cat]).toLowerCase().includes(q)));
-  list.sort((a,b)=> F.sort==='pay' ? b.pay-a.pay : a.days-b.days);
-  return list.length ? `<p class="meta" style="grid-column:1/-1">${list.length} brief${list.length>1?'s':''} found</p>`+list.map(card).join('') : '<p class="meta">No briefs match. Try removing a filter.</p>';
+function fdef(k){
+  if(k==='b') return [['type','Deal',[['','All'],...Object.entries(TYPES)]],
+    ['city','Location',[['','Anywhere'],...[...new Set(S.briefs.map(b=>b.city).filter(c=>c!=='All Maharashtra'))].map(c=>[c,c])]],
+    ...(isCreator()?[['mine','Eligibility',[[false,'All briefs'],[true,'Only ones I qualify for']]]]:[]),
+    ['sort','Sort by',[['new','Newest'],['soon','Closing soon'],['pay','Highest pay']]]];
+  return [['ccat','Category',[['','All'],...Object.entries(CATS)]],
+    ['ccity','City',[['','Anywhere'],...[...new Set(S.creators.map(c=>c.city).filter(Boolean))].map(c=>[c,c])]],
+    ['clang','Language',[['','Any'],...LANGS.map(l=>[l,l])]],
+    ['cfol','Followers',[['0','Any'],['1000','1,000+'],['5000','5,000+'],['10000','10,000+']]],
+    ['csort','Sort by',[['fol','Most followers'],['new','Newest']]]];
+}
+function fbar(k){
+  const groups = fdef(k), open = S.fo===k;
+  const act = groups.filter(([f])=>!/sort/.test(f) && !same(S.flt[f],DEF[f]));
+  return `<div class="fbar"><button class="fbtn" data-act="fopen" data-v="${k}" aria-expanded="${open}">Filters${act.length?`<em>${act.length}</em>`:''}</button>${act.map(([f,lab,o])=>`<button class="achip" data-act="flt" data-f="${f}" data-v="${DEF[f]}" aria-label="Remove ${lab} filter">${esc((o.find(x=>same(x[0],S.flt[f]))||['',''])[1])} <span aria-hidden="true">×</span></button>`).join('')}</div>
+  ${open?`<div class="fpanel">${groups.map(([f,lab,o])=>`<div class="fgroup"><span>${lab}</span><div class="chips" style="flex-wrap:wrap;overflow:visible">${o.map(([v,t])=>`<button class="pill" data-act="flt" data-f="${f}" data-v="${esc(v)}" aria-pressed="${same(S.flt[f],v)}">${esc(t)}</button>`).join('')}</div></div>`).join('')}<div class="row"><button class="link" data-act="fclear" data-v="${k}">Clear all</button><button class="btn" data-act="fopen" data-v="${k}">Show results</button></div></div>`:''}`;
 }
 
-function vHome(){ return `
-  <section class="hero">
+/* ---------- views ---------- */
+function gridHTML(){
+  const s = S.q.trim().toLowerCase(), F = S.flt;
+  const list = S.briefs.filter(b => (!S.cat || b.cat===S.cat) && (!F.type || b.type===F.type) && (!F.city || b.city===F.city || b.city==='All Maharashtra') && (!F.mine || ok(b)) && (!s || (b.title+' '+b.brand_name+' '+b.city+' '+(CATS[b.cat]||'')).toLowerCase().includes(s)));
+  if(F.sort==='pay') list.sort((a,b)=>b.pay-a.pay); else if(F.sort==='soon') list.sort((a,b)=>daysLeft(a)-daysLeft(b));
+  if(!S.briefs.length) return `<div class="panel" style="grid-column:1/-1"><h3>No open briefs yet</h3><p class="meta">Brands are just joining. ${S.user?'Check back soon.':'Create your profile now so they can find you.'}</p></div>`;
+  return list.length ? `<p class="meta" style="grid-column:1/-1">${list.length} brief${list.length>1?'s':''} found</p>`+list.map(card).join('') : '<p class="meta" style="grid-column:1/-1">No briefs match. Try removing a filter.</p>';
+}
+
+function vHome(){
+  const fan = S.briefs.slice(0,3);
+  return `
+  ${S.user?'':`<section class="hero">
     <div class="sec">
       <span class="eyebrow">Now open in Marathi</span>
       <h1>Where brands and creators find each other.</h1>
       <p>Brands post what they need and choose who fits. Creators browse brands and apply. In regional languages, starting with Marathi.</p>
-      <div class="cta"><button class="btn accent" data-act="startC">I’m a creator</button><button class="btn ghost" data-act="role" data-v="brand">I’m a brand</button></div>
+      <div class="cta"><button class="btn accent" data-act="join" data-v="creator">I’m a creator</button><button class="btn ghost" data-act="join" data-v="brand">I’m a brand</button></div>
     </div>
-    <div class="fan">${BRIEFS.slice(0,3).map(b=>cover(b,'div')).join('')}</div>
+    ${fan.length?`<div class="fan">${fan.map(b=>cover(b,'div')).join('')}</div>`:''}
   </section>
-  <ul class="facts"><li>Brands pay upfront, so your money is held before you shoot</li><li>Creators keep 100% of their fee</li><li>Fixed fee, collaboration or commission on sales</li><li>Creators of every size can join</li></ul>
+  <ul class="facts"><li>Fixed fee, collaboration or commission on sales</li><li>Brands set the follower range they want</li><li>Creators of every size can join</li></ul>
   <section class="sec"><h2>How it works</h2><div class="split">
-    <div class="panel"><span class="eyebrow">If you are a creator</span><ol class="steps"><li>Sign up with your mobile number.</li><li>Add your city, languages and what you make.</li><li>Connect Instagram or YouTube, or skip it for content-only work.</li><li>Browse brands and apply, or join a commission programme.</li><li>Shoot and send your video.</li><li>The brand approves it. The money, already held by Boli, reaches your UPI. You keep 100%.</li></ol><div><button class="btn accent" data-act="startC">Start as a creator</button></div></div>
-    <div class="panel"><span class="eyebrow">If you are a brand</span><ol class="steps"><li>Create your brand account.</li><li>Choose how you pay: fixed fee, commission or a full programme.</li><li>Post a brief with the language and follower range you want.</li><li>Review applicants and their audience reports, or invite creators yourself.</li><li>Fund the brief upfront. Boli holds the money.</li><li>Approve the videos you like and Boli pays the creators. One GST invoice for everything.</li></ol><div><button class="btn" data-act="role" data-v="brand">Start as a brand</button></div></div>
-  </div></section>
+    <div class="panel"><span class="eyebrow">If you are a creator</span><ol class="steps"><li>Create your account.</li><li>Add your city, languages and what you make.</li><li>Browse brands and apply to the briefs you like.</li><li>Once a brand accepts you, shoot and send your video.</li><li>The brand approves it and pays you.</li></ol><div><button class="btn accent" data-act="join" data-v="creator">Start as a creator</button></div></div>
+    <div class="panel"><span class="eyebrow">If you are a brand</span><ol class="steps"><li>Create your brand account.</li><li>Choose how you pay: fixed fee, commission or a full programme.</li><li>Post a brief with the follower range you want.</li><li>Review applicants, or browse creators yourself.</li><li>Approve the videos you like and pay the creator.</li></ol><div><button class="btn" data-act="join" data-v="brand">Start as a brand</button></div></div>
+  </div></section>`}
   <section class="sec" id="briefs">
-    <div class="row" style="flex-wrap:wrap"><h2>Brands looking for creators</h2><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Search masala, saree, Pune" aria-label="Search briefs"></div>
+    <div class="row" style="flex-wrap:wrap"><h2>Brands looking for creators</h2><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Search by product, brand or city" aria-label="Search briefs"></div>
     <div class="chips"><button class="pill" data-act="cat" data-v="" aria-pressed="${!S.cat}">All</button>${Object.entries(CATS).map(([k,v])=>`<button class="pill" data-act="cat" data-v="${k}" aria-pressed="${S.cat===k}">${v}</button>`).join('')}</div>
     ${fbar('b')}
     <div class="grid" id="grid">${gridHTML()}</div>
   </section>
   <section class="course">
-    <div class="sec"><span class="eyebrow">Creator course</span><h2>Never made a video? Start here.</h2><p>Six weeks, ${TOTAL} short lessons, from picking your topic to your first paid brief. From ₹499.</p></div>
-    <button class="btn accent" data-act="tab" data-v="learn">See the course</button>
-  </section>
-  <p class="proto">Prototype with invented brands, people and amounts. Nothing is saved and no money moves. “Boli” is a working name.</p>`; }
+    <div class="sec"><span class="eyebrow">Creator course</span><h2>Never made a video? A course is on the way.</h2><p>Short lessons that take you from picking your topic to your first paid brief. Coming soon.</p></div>
+  </section>`; }
 
-function track(s){ const i = {applied:1,sent:2,approved:3,paid:4}[s]||1; return `<div class="track">${['Applied','Video sent','Approved','Paid'].map((x,k)=>`<span class="${k<i?'on':''}">${x}</span>`).join('')}</div>`; }
+function vAuth(){
+  const up = S.authMode==='up';
+  return `<div class="sec" style="max-width:520px;margin:0 auto;width:100%">
+    <h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${up?'Create your account':'Welcome back'}</h1>
+    <form id="authForm" class="panel" novalidate>
+      ${up?`<b>I am joining as</b><div class="chips" data-g="arole">${[['creator','A creator'],['brand','A brand']].map(([k,t])=>`<button type="button" class="pill" data-act="arole" data-k="${k}" aria-pressed="${S.authRole===k}">${t}</button>`).join('')}</div>`:''}
+      <label for="aEmail">Email<input id="aEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
+      <label for="aPass">Password<input id="aPass" type="password" autocomplete="${up?'new-password':'current-password'}" minlength="8" required placeholder="${up?'At least 8 characters':'Your password'}"></label>
+      <p class="meta" id="aErr" hidden></p>
+      <button class="btn accent wide" type="submit" id="aBtn">${up?'Create account':'Sign in'}</button>
+      <button type="button" class="link" data-act="amode">${up?'Already have an account? Sign in':'New here? Create an account'}</button>
+    </form>
+    ${up?'<p class="meta">By creating an account you agree that the details you add to your profile are shown to other signed-in members of Boli.</p>':''}
+  </div>`; }
+
+function vProfile(){
+  const m = S.me || {}, role = m.role || S.authRole, isNew = !S.me;
+  const head = `<h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${isNew?(role==='creator'?'Build your creator profile':'Set up your brand'):'Edit your profile'}</h1>`;
+  const creator = `<p class="meta">This is what brands see when they look for creators.</p>
+    <form id="profForm" class="panel" novalidate>
+      <label for="pName">Full name<input id="pName" maxlength="80" value="${esc(m.name)}" placeholder="e.g. Meera Joshi"></label>
+      <label for="pCity">City or district<select id="pCity">${opts(CITIES.map(c=>[c,c]), m.city||'Mumbai')}</select></label>
+      <b>Languages you create in</b>${chipsPick('lang', LANGS.map(l=>[l,l]), m.langs||['Marathi'])}
+      <b>What you make</b>${chipsPick('cat', Object.entries(CATS), m.cats||[])}
+      <b>Deals you are open to</b>${chipsPick('deal', Object.entries(DEALS), m.deals||Object.keys(DEALS))}
+      <label for="pSocial">Instagram or YouTube link (optional)<input id="pSocial" value="${esc(m.social)}" placeholder="https://instagram.com/yourname"></label>
+      <label for="pFol">Followers on that account<input id="pFol" type="number" min="0" step="1" value="${m.followers||0}"></label>
+      <p class="meta">Enter 0 if you have no account and want content-only work. Brands can check your page, so keep this accurate.</p>
+      <label for="pSample">Link to a sample video (optional)<input id="pSample" value="${esc(m.sample_link)}" placeholder="https://"></label>
+      <label for="pRate">Your usual rate per video in ₹ (optional)<input id="pRate" type="number" min="0" step="100" value="${m.rate||''}" placeholder="e.g. 1500"></label>
+      ${isNew?'<label for="pAge" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="pAge" type="checkbox" style="width:auto"> I am 18 or older</label>':''}
+      <p class="meta" id="pErr" hidden></p>
+      <button class="btn accent wide" type="submit">${isNew?'Finish':'Save changes'}</button>
+    </form>`;
+  const brand = `<p class="meta">Creators see your brand name on every brief you post.</p>
+    <form id="profForm" class="panel" novalidate>
+      <label for="pName">Brand name<input id="pName" maxlength="80" value="${esc(m.name)}" placeholder="e.g. your masala brand"></label>
+      <label for="pSite">Website or Instagram page (optional)<input id="pSite" value="${esc(m.site)}" placeholder="https://"></label>
+      <div class="two"><label for="pCat">Category<select id="pCat">${opts(Object.entries(CATS), (m.cats||[])[0]||'food')}</select></label><label for="pCity">Based in<select id="pCity">${opts(CITIES.map(c=>[c,c]), m.city||'Mumbai')}</select></label></div>
+      <p class="meta" id="pErr" hidden></p>
+      <button class="btn accent wide" type="submit">${isNew?'Finish':'Save changes'}</button>
+    </form>`;
+  return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%">${head}${role==='creator'?creator:brand}</div>`; }
 
 function vBrief(){
-  const b = BRIEFS.find(x=>x.id===S.brief), s = S.status[b.id];
-  const action = !s ? `${ok(b)?`<button class="btn accent wide" data-act="apply" data-v="${b.id}">Apply for this brief</button>`:`<button class="btn wide" disabled>Needs ${need(b)}. You have ${ME}.</button>`}`
-    : s==='applied' ? `${track(s)}<button class="btn accent wide" data-act="send">I have sent my video</button><p class="meta">In the real app this is where the video uploads.</p>`
-    : s==='sent' ? `${track(s)}<button class="btn wide" data-act="approve">Demo: the brand approves your video</button><p class="meta">In the real app you wait here while the brand reviews it.</p>`
-    : s==='approved' ? `${track(s)}${S.cu&&S.cu.upi?`<button class="btn accent wide" data-act="getpaid">Demo: Boli releases ${rs(b.pay)} to you</button>`:`<form id="payForm" class="sec" novalidate><b>Where should we send your money?</b><label for="pUpi">UPI ID<input id="pUpi" placeholder="Demo: leave blank"></label><label for="pPan">PAN, for tax records<input id="pPan" maxlength="10" placeholder="Demo: leave blank"></label><button class="btn accent wide" type="submit">Save and get paid</button><p class="meta">Asked once, when your first payment is due. This demo stores nothing.</p></form>`}`
-    : `${track(s)}<p><span class="tag ok">Paid</span> ${rs(b.pay)} released by Boli to your UPI. Your rating went up.</p>`;
-  const aff = b.type==='affiliate', sales = S.sales[b.id]||0, LVS = b.lv||[{c:b.comm,r:0,at:0}], li = lvIdx(b), L = LVS[li];
-  const affAct = !s ? `<button class="btn accent wide" data-act="join" data-v="${b.id}">Join this programme</button>`
-    : `<div class="kv"><span>Your code</span><span class="code">${myCode(b)}</span></div>
-       <div class="stat"><div><b>${rs(sales)}</b><span>Sales through your code</span></div><div><b>${rs(Math.round(sales*L.c/100)+L.r)}</b><span>Earned${L.r?', retainer included':''}</span></div></div>
-       <button class="btn wide" data-act="sale" data-v="${b.id}">Add a sample sale of ₹600</button><p class="meta">Demo button. In the real app, sales arrive when buyers use your code.</p>`;
-  const extra = (b.lv?`<h3>Levels</h3>${LVS.map((l,k)=>`<div class="lv${s&&k===li?' on':''}"><span><b>${l.n}</b><br><span class="meta">${l.at?'From '+rs(l.at)+' in sales':'Where everyone starts'}</span></span><span style="text-align:right"><b>${l.c}%</b><br><span class="meta">${l.r?'plus '+rs(l.r)+' a month':'commission only'}</span></span></div>`).join('')}${b.minV?`<p class="meta">Post at least ${b.minV} videos a month to keep a paid level.</p>`:''}`:'')
+  const b = briefById(S.arg); if(!b) return `<button class="link" data-act="home">‹ All briefs</button><p class="meta">This brief is no longer open.</p>`;
+  const a = myApp(b.id), s = a && a.status, aff = b.type==='affiliate', L = b.levels;
+  let action;
+  if(!S.user) action = `<button class="btn accent wide" data-act="join" data-v="creator">Create an account to apply</button>`;
+  else if(isBrand()) action = b.brand_id===S.user.id ? `<button class="btn wide" data-act="nav" data-v="dash">Manage this brief</button>` : `<p class="meta">You are signed in as a brand. Only creators can apply to briefs.</p>`;
+  else if(!s) action = ok(b) ? `<button class="btn accent wide" data-act="apply" data-v="${b.id}">${aff?'Ask to join this programme':'Apply for this brief'}</button>` : `<button class="btn wide" disabled>Needs ${need(b)}. You have ${num(S.me.followers)}.</button>`;
+  else if(s==='declined') action = `<p class="meta">The brand chose other creators for this brief.</p>`;
+  else action = track(s) + (s==='applied' ? `<p class="meta">Sent. You will see it here when the brand responds.</p>`
+    : s==='accepted' ? `<form id="vidForm" class="sec" novalidate><label for="vLink">Link to your finished video<input id="vLink" placeholder="https://" value="${esc(a.video_link)}"></label><p class="meta">Upload it to Google Drive, YouTube (unlisted) or Instagram and paste the link.</p><button class="btn accent wide" type="submit">Send video to the brand</button></form>`
+    : s==='sent' ? `<p class="meta">The brand is reviewing your video.</p>`
+    : s==='approved' ? `<p class="meta">Approved. Agree payment details with the brand in messages.</p>`
+    : `<p><span class="tag ok">Paid</span> The brand has marked this as paid.</p>`)
+    + `<button class="btn ghost wide" data-act="thread" data-v="${a.id}">Messages with ${esc(b.brand_name)}</button>`;
+  const extra = (Array.isArray(L)&&L.length?`<h3>Levels</h3>${L.map(l=>`<div class="lv"><span><b>${esc(l.n)}</b><br><span class="meta">${l.at?'From '+rs(l.at)+' in sales':'Where everyone starts'}</span></span><span style="text-align:right"><b>${Number(l.c)}%</b><br><span class="meta">${l.r?'plus '+rs(l.r)+' a month':'commission only'}</span></span></div>`).join('')}${b.min_videos?`<p class="meta">Post at least ${b.min_videos} videos a month to keep a paid level.</p>`:''}`:'')
     + (b.challenge?`<div class="panel"><span class="eyebrow">Challenge</span><h3>${esc(b.challenge.t)}</h3><p class="meta">Bonus of ${rs(b.challenge.bonus)} on top of your commission.</p></div>`:'')
-    + (aff?leader(b,s):'')
-    + (b.hooks?`<h3>Hooks that work</h3>${b.hooks.map(h=>`<p class="hook">${esc(h)}</p>`).join('')}<p class="meta">Shared by the brand from videos that did well. Make your own version.</p>`:'');
-  return `<button class="link" data-act="back">‹ All briefs</button>
+    + ((b.hooks||[]).length?`<h3>Hooks that work</h3>${b.hooks.map(h=>`<p class="hook">${esc(h)}</p>`).join('')}<p class="meta">Shared by the brand from videos that did well. Make your own version.</p>`:'');
+  return `<button class="link" data-act="home">‹ All briefs</button>
   <div class="split narrow">
     ${cover(b,'div')}
     <div class="sec">
-      <span class="eyebrow">${esc(b.brand)} · ${CATS[b.cat]}</span>
+      <span class="eyebrow">${esc(b.brand_name)} · ${CATS[b.cat]||''}</span>
       <h1 style="font-size:clamp(1.8rem,4.6vw,2.6rem)">${esc(b.title)}</h1>
       <div class="panel">
         <div class="kv"><span>You earn</span><b>${aff?b.comm+'% of every sale':rs(b.pay)}</b></div>
-        <div class="kv"><span>You get</span><span>${esc(b.gives)}</span></div>
-        ${aff?`<div class="kv"><span>Tracking</span><span>Every sale through your Boli code is counted and paid. Sales made outside Boli can’t be tracked.</span></div>`:`<div class="kv"><span>Payment</span><span><span class="tag ok">Paid upfront</span> ${rs(b.pay)} is already held by Boli. You keep 100%. Boli’s fee is paid by the brand.</span></div>`}
         <div class="kv"><span>Deal</span><span>${TYPES[b.type]}: ${b.type==='collab'?'you post it on your own page':aff?'you post with your own code and earn on each sale':'the brand posts it, you do not have to'}</span></div>
         <div class="kv"><span>Followers needed</span><span>${need(b)}</span></div>
-        ${b.pair?`<div class="kv"><span>Paired brands</span><span>${esc(b.brand)} with ${esc(b.pair)}: show both products</span></div>`:''}
         <div class="kv"><span>Where</span><span>${esc(b.city)}</span></div>
-        <div class="kv"><span>Language</span><span>Marathi</span></div>
-        <div class="kv"><span>Apply within</span><span>${b.days} day${b.days>1?'s':''}</span></div>
-        ${aff?affAct:action}
+        <div class="kv"><span>Open until</span><span>${left(daysLeft(b))}</span></div>
+        ${action}
       </div>
       ${extra}
       <h3>What to shoot</h3>
-      <ol class="steps">${STD.map(x=>`<li>${esc(x)}</li>`).join('')}</ol>
-      <p class="meta">${aff?'Commission is paid to your UPI every month.':'The brand has already paid this into Boli. It reaches your UPI within 2 days of approval.'}${b.type==='collab'?' Your post must carry the paid partnership label.':''}</p>
+      <ol class="steps">${STD.map(x=>`<li>${x}</li>`).join('')}</ol>
+      <p class="meta">${aff?'The brand gives you your code in messages once you are accepted, and pays your commission directly.':'For now the brand pays you directly once it approves your video. Agree the details in messages.'}${b.type!=='content'?' Your post must carry the paid partnership label.':''}</p>
     </div>
   </div>`; }
 
-function vLearn(){
-  const n = Object.keys(S.done).length, pct = Math.round(n/TOTAL*100);
-  const side = S.enrolled
-    ? `<div class="panel"><span class="eyebrow">Your progress</span><span class="big">${n}<span class="meta" style="font-size:1rem;font-family:var(--body);font-weight:500;letter-spacing:0"> of ${TOTAL} lessons</span></span><div class="bar"><i style="width:${pct}%"></i></div>
-       <p class="meta">${n===TOTAL?'Course complete. Go to Briefs and take your first paid job.':'Tap a lesson when you finish it.'}</p></div>`
-    : `<div class="panel"><p class="price"><s>₹999</s>₹499</p><p class="meta">Launch price for the first 100 learners. Mentor to be announced.</p>
-       ${S.paying?`<p><b>Pay ₹499</b> <span class="meta">This is a demo. No money is taken.</span></p><div class="two"><button class="btn accent" data-act="paid">Pay by UPI</button><button class="btn ghost" data-act="cancelpay">Cancel</button></div>`
-                 :`<button class="btn accent wide" data-act="pay">Join the course</button>`}
-       <p class="meta">The course is optional. You can apply for briefs without it.</p></div>`;
+function vWork(){
+  return `<div class="sec"><span class="eyebrow">My work</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Your applications</h1>
+    ${S.apps.map(a=>`<div class="panel"><div class="row"><button class="bc-t" data-act="brief" data-v="${a.brief_id}">${esc(a.briefs.brand_name)}</button><b>${payLabel(a.briefs)}</b></div><p class="meta">${esc(a.briefs.title)}</p>${a.status==='declined'?'<span class="meta">Not selected for this brief.</span>':track(a.status)}<div class="cta"><button class="pill" data-act="brief" data-v="${a.brief_id}">Open brief</button><button class="pill" data-act="thread" data-v="${a.id}">Messages</button></div></div>`).join('') || `<div class="panel"><p class="meta">Briefs you apply for appear here, with each step tracked until you are paid.</p><div><button class="btn accent" data-act="home">Browse briefs</button></div></div>`}
+  </div>`; }
+
+function appRow(a){
+  const c = a.profiles || {}, s = a.status, v = url(a.video_link), soc = url(c.social);
+  const lab = {applied:'Applied', accepted:'Accepted, now shooting', declined:'Declined', sent:'Video received', approved:'Approved, payment due', paid:'Paid'}[s];
+  const btn = (st, t, on) => `<button class="pill" data-act="status" data-v="${a.id}" data-s="${st}"${on?' aria-pressed="true"':''}>${t}</button>`;
+  const acts = s==='applied' ? btn('accepted','Accept',1)+btn('declined','Decline') : s==='sent' ? btn('approved','Approve video',1)+btn('accepted','Ask for changes') : s==='approved' ? btn('paid','Mark as paid',1) : '';
+  return `<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b><br><span class="meta">${esc(c.city||'')} · ${num(c.followers)} followers · ${lab}</span></div>
+    ${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${v&&s!=='applied'?`<a class="pill" href="${esc(v)}" target="_blank" rel="noopener">Watch video</a>`:''}${acts}<button class="pill" data-act="thread" data-v="${a.id}">Messages</button></div>`; }
+
+function vDash(){
+  const t = S.tpl;
   return `<div class="split">
-  <div class="sec"><span class="eyebrow">Creator course</span><h1>From zero to your first paid video.</h1>
-    <p class="meta" style="font-size:1.05rem">Six weeks, ${TOTAL} short lessons you can watch on your phone. Taught in Marathi first, more languages to follow.</p>${side}</div>
-  <div>${MODS.map((m,i)=>`<div class="wk"><span class="num">${i+1}</span>
-    <button data-act="mod" data-v="${i}" aria-expanded="${S.open===i}"><h3>${m.t}</h3><span class="meta">${m.l.filter((_,j)=>S.done[i+'-'+j]).length}/3</span></button>
-    ${S.open===i?`<div class="ls">${m.l.map((x,j)=>{ const key=i+'-'+j, free=(i===0&&j===0), can=S.enrolled||free, d=S.done[key];
-      return `<button class="lesson${d?' done':''}" data-act="lesson" data-v="${key}" ${can?'':'disabled'}><span>${esc(x)}</span><span class="st">${d?'Done':can?(free&&!S.enrolled?'Free preview':'Start'):'Locked'}</span></button>`;}).join('')}</div>`:''}
-  </div>`).join('')}</div></div>`; }
-
-function vEarn(){
-  if(!S.cu) return `<div class="sec"><span class="eyebrow">My work</span><h1>Sign up to track your work.</h1><p class="meta">Your applications, commission programmes and payments appear here.</p><div><button class="btn accent" data-act="startC">Create a creator account</button></div></div>`;
-  const mine = BRIEFS.filter(b=>S.status[b.id]&&S.status[b.id]!=='paid'), paid = BRIEFS.filter(b=>S.status[b.id]==='paid');
-  const offers = paid.filter(b=>S.ad[b.id]===undefined).map(b=>`<div class="panel"><span class="eyebrow">Ad request</span><b>${esc(b.brand)} wants to run your video as an ad</b><p class="meta">Your video did well. They offer ${rs(2000)} extra to use it in ads for 30 days.</p><div class="two"><button class="btn accent" data-act="adyes" data-v="${b.id}">Accept ${rs(2000)}</button><button class="btn ghost" data-act="adno" data-v="${b.id}">Decline</button></div></div>`).join('')
-    + (S.ms<0?'':`<div class="panel"><span class="eyebrow">Sample offer</span><b>Aarsa Herbals wants to send you their utna pack</b>${S.ms===0?`<p class="meta">No payment and no obligation. Post only if you like it. Sample offer.</p><div class="two"><button class="btn accent" data-act="ms" data-v="1">Accept sample</button><button class="btn ghost" data-act="ms" data-v="-1">No thanks</button></div>`:S.ms===1?`<p class="meta">On the way to your delivery address. The brand cannot see your address.</p><div><button class="pill" data-act="ms" data-v="2" aria-pressed="true">I received it</button></div>`:`<p class="meta">Received. If you like it, the brand may invite you to a brief.</p>`}</div>`);
-  return `<div class="split">
-  <div class="sec"><span class="eyebrow">My work</span><h1>${rs(S.earned)}</h1><p class="meta">Earned so far · ${esc(S.cu.name)}, ${esc(S.cu.city)}${S.cu.upi?' · UPI linked':''}</p>
-    ${recordPanel(paid.length)}
-    <div class="panel"><span class="eyebrow">Your audience</span>${S.cu.conn?report(CREATORS[0],true)+'<p class="meta">Free for you. Brands can see this report when they consider you.</p>':'<p class="meta">Connect Instagram or YouTube to get your audience report. Until then, brands judge you on your sample videos.</p>'}</div></div>
-  <div class="sec">
-    ${offers}
-    <h2>In progress</h2>
-    ${mine.map(b=>`<div class="panel"><div class="row"><button class="bc-t" data-act="brief" data-v="${b.id}">${esc(b.brand)}</button><b>${payLabel(b)}</b></div><p class="meta">${esc(b.title)}</p>${S.status[b.id]==='joined'?`<span class="meta">Programme joined · ${rs(S.sales[b.id]||0)} in sales so far</span>`:track(S.status[b.id])}</div>`).join('') || '<p class="meta">Briefs you apply for appear here, with each step tracked until you are paid.</p>'}
-    <h2>Paid</h2>
-    ${paid.map(b=>`<div class="panel"><div class="row"><b>${esc(b.brand)}</b><b>${rs(b.pay)}</b></div><div class="row"><span class="meta">${esc(b.title)}</span><span class="tag ok">Paid</span></div></div>`).join('') || '<p class="meta">Nothing paid yet. Finish a brief and it lands here.</p>'}
-    
-  </div></div>`; }
-
-function recordPanel(n){
-  const goal=3, pct=Math.min(100,Math.round(n/goal*100));
-  return `<div class="panel"><span class="eyebrow">Your Boli record</span>
-    <div class="stat"><div><b>${n}</b><span>Jobs done on Boli</span></div><div><b>${n?'4.9 ★':'–'}</b><span>${n?'Brand rating (sample)':'No ratings yet'}</span></div></div>
-    ${n>=goal?'<p><span class="tag">Top Boli creator</span> You see new briefs 24 hours before everyone else.</p>':`<div><div class="row"><b>Top Boli creator</b><span class="meta">${n} of ${goal} jobs</span></div><div class="bar" style="margin-top:8px"><i style="width:${pct}%"></i></div></div><p class="meta">Top creators see new briefs 24 hours early and rank first when brands search.</p>`}
-    <p class="meta">Only work done through Boli counts towards your rating, badge and early access.</p></div>`;
-}
-
-function sumHTML(){
-  if(S.tpl!=='simple') return `<p class="meta">Boli fee: ${FEE1}% of the commission you pay out, ${FEE2}% with creators you have worked with twice. Sales are tracked only through Boli codes and links, so you and the creator both see every sale.</p>`;
-  const cr=S.fp*S.fn, fee=Math.round(cr*FEE1/100), gst=Math.round(fee*.18);
-  return `<div class="sum"><div class="kv"><span>Creators receive, 100% of their fee</span><span>${rs(S.fp)} × ${S.fn} = ${rs(cr)}</span></div><div class="kv"><span>Boli fee, ${FEE1}%</span><span>${rs(fee)}</span></div><div class="kv"><span>GST on Boli fee, 18%</span><span>${rs(gst)}</span></div><div class="kv"><span><b>You pay upfront</b></span><b>${rs(cr+fee+gst)}</b></div></div>
-  <p class="meta">Held by Boli and released to each creator only when you approve their video. Money for unused spots comes back to you. Fee drops to ${FEE2}% from your 3rd job with the same creator.</p>`;
-}
-
-function paperPanel(){
-  return `<div class="panel"><span class="eyebrow">Paperwork handled</span><b>One invoice and one payment, however many creators you hire.</b>
-  <ul class="checks"><li>One GST invoice from Boli each month, covering every creator you paid</li><li>TDS on creator payments handled by Boli, with certificates for your records</li><li>Every video checked for the paid partnership label before you approve it</li><li>A usage-rights agreement signed on every job, so you know where you can use the video</li></ul>
-  <div><button class="pill" data-act="invoice">See a sample monthly invoice</button></div></div>`;
-}
-
-function planPanel(){
-  const pro=S.plan==='pro';
-  return `<div class="panel"><div class="row"><span class="eyebrow">Your plan</span><span class="tag${pro?' ok':''}">${pro?'Boli Pro':'Free'}</span></div>
-  <p class="meta">${pro?'Unlimited audience reports and filters. Creators’ phone numbers and handles are shared once you hire them through Boli.':`${S.credits} of 3 free report unlocks left this month. Creators’ phone numbers and handles stay private until you hire them through Boli.`}</p>
-  ${pro?'':'<div><button class="btn" data-act="pro">Upgrade to Boli Pro · ₹1,999 a month</button></div>'}</div>`;
-}
-
-function vBrand(){ return `<div class="split">
-  <div class="sec"><span class="eyebrow">For brands</span><h1>Find creators who speak your customers’ language.</h1>
-  <p class="meta" style="font-size:1.05rem">Post a brief and let creators come to you, or browse and invite them yourself. You choose the follower range, and whether you want a collaboration or only the content.</p>
+  <div class="sec"><span class="eyebrow">${esc(S.me.name)}</span><h1 style="font-size:clamp(1.8rem,5vw,2.6rem)">Post a brief</h1>
   <form id="briefForm" class="panel" novalidate>
     <b>How do you want to pay creators?</b>
-    <div class="chips">${Object.entries(TPL).map(([k,v])=>`<button type="button" class="pill" data-act="tpl" data-v="${k}" aria-pressed="${S.tpl===k}">${v}</button>`).join('')}</div>
-    <p class="meta">${TPLD[S.tpl]}</p>
-    <label for="fBrand">Brand name<input id="fBrand" required maxlength="40" value="${esc(S.fb)}" placeholder="e.g. your masala brand"></label>
-    <label for="fAsk">What should the video show?<textarea id="fAsk" rows="3" required maxlength="120" placeholder="e.g. A home cook making misal with our masala">${esc(S.fa)}</textarea></label>
+    <div class="chips">${Object.entries(TPL).map(([k,v])=>`<button type="button" class="pill" data-act="tpl" data-v="${k}" aria-pressed="${t===k}">${v}</button>`).join('')}</div>
+    <p class="meta">${TPLD[t]}</p>
+    <label for="fAsk">What should the video show?<textarea id="fAsk" rows="3" maxlength="200" placeholder="e.g. A home cook making misal with our masala">${esc(S.fa)}</textarea></label>
     <div class="two">
-      <label for="fCat">Category<select id="fCat">${Object.entries(CATS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></label>
-      <label for="fCity">Where<select id="fCity"><option>All Maharashtra</option><option>Mumbai</option><option>Thane</option><option>Pune</option><option>Nashik</option><option>Kolhapur</option><option>Nagpur</option><option>Konkan</option></select></label>
+      <label for="fCat">Category<select id="fCat">${opts(Object.entries(CATS), (S.me.cats||[])[0]||'food')}</select></label>
+      <label for="fCity">Where<select id="fCity">${opts([['All Maharashtra','All Maharashtra'],...CITIES.filter(c=>c!=='Other').map(c=>[c,c])],'All Maharashtra')}</select></label>
     </div>
     <div class="two">
-      ${S.tpl==='simple'?`<label for="fPay">Pay per video (₹)<input id="fPay" type="number" min="500" step="100" value="${S.fp}"></label>`:`<label for="fComm">Commission per sale (%)<input id="fComm" type="number" min="1" max="50" value="10"></label>`}
-      <label for="fNum">Creators needed<input id="fNum" type="number" min="1" max="200" value="${S.fn}"></label>
+      ${t==='simple'?`<label for="fPay">Pay per video (₹)<input id="fPay" type="number" min="100" step="100" value="1500"></label>`:`<label for="fComm">Commission per sale (%)<input id="fComm" type="number" min="1" max="50" value="10"></label>`}
+      <label for="fNum">Creators needed<input id="fNum" type="number" min="1" max="500" value="10"></label>
     </div>
     <div class="two">
-      ${S.tpl==='simple'?`<label for="fType">What you want<select id="fType"><option value="collab">Collaboration</option><option value="content">Content only</option></select></label>`:`<label for="fVid">Minimum videos a month<input id="fVid" type="number" min="0" max="30" value="4"></label>`}
+      ${t==='simple'?`<label for="fType">What you want<select id="fType"><option value="collab">Collaboration</option><option value="content">Content only</option></select></label>`:`<label for="fVid">Minimum videos a month<input id="fVid" type="number" min="0" max="30" value="4"></label>`}
       <label for="fMin">Minimum followers<select id="fMin"><option value="0">No minimum</option><option value="1000">1,000+</option><option value="5000">5,000+</option><option value="10000">10,000+</option><option value="50000">50,000+</option></select></label>
     </div>
-    ${S.tpl==='simple'?`<p class="meta">Collaboration: the creator posts on their own page. Content only: you receive the video and post it yourself.</p>`:`<label for="fHooks">Hooks that work, one per line (optional)<textarea id="fHooks" rows="3" placeholder="e.g. One spoon. That is the whole recipe."></textarea></label>`}
-    ${S.tpl==='full'?`<div class="two"><label for="fUp">Sales to reach next level (₹)<input id="fUp" type="number" min="500" step="500" value="2500"></label><label for="fRet">Top-level monthly retainer (₹)<input id="fRet" type="number" min="0" step="500" value="3000"></label></div>
-    <div class="two"><label for="fChT">Challenge sales target (₹)<input id="fChT" type="number" min="0" step="500" value="5000"></label><label for="fChB">Challenge bonus (₹)<input id="fChB" type="number" min="0" step="100" value="1000"></label></div>
-    <p class="meta">Creators start on commission only, then earn a higher rate and a retainer as their sales grow.</p>`:''}
-    <div id="sum">${sumHTML()}</div>
-    <p class="meta" id="fErr" hidden>Add a brand name and what the video should show.</p>
-    <button class="btn accent wide" type="submit">${S.tpl==='simple'?'Post brief and fund it':'Post programme'}</button>
-    <p class="meta">By posting, you agree to hire creators you find on Boli through Boli for 12 months. Moving a job off Boli in that time carries a fee (prototype terms).</p>
-  </form>
-  ${paperPanel()}</div>
-  <div class="sec">
-  ${S.posted.length?`<h2>Your briefs</h2>${S.posted.map((p,pi)=>`<div class="panel"><div class="row"><b>${esc(p.brand)}</b><b>${p.label} × ${p.num}</b></div><p>${esc(p.title)}</p>${p.funded?`<span class="meta">Live for creators now. ${p.apps.length} sample creators have applied.</span>${p.aff?'':`<span class="tag ok" style="align-self:flex-start">${rs(p.held)} held by Boli for your creators</span>`}${p.apps.map((a,ai)=>appRow(p,pi,a,ai)).join('')}`:`<div class="lock"><b>Fund this brief to make it live</b><span class="meta">${rs(p.total)} = ${rs(p.pay)} × ${p.num} creators, plus Boli’s fee and GST. Boli holds it until you approve each video. Money for unused spots comes back to you.</span><button class="btn accent" data-act="fund" data-v="${pi}">Demo: pay ${rs(p.total)} into Boli</button></div>`}</div>`).join('')}`:''}
-  ${S.posted.length?topVideos():''}
-  ${pairPanel()}
-  <h2>Find creators</h2>
-  ${planPanel()}
-  ${fbar('c')}
-  ${sampBar()}
-  <p class="meta">Sample profiles</p>
-  <div>${clist().map(({c,i})=>`<div class="person t-${c.cat}" style="flex-wrap:wrap"><span class="av">${ini(c.n)}</span><div><b>${c.n}</b><br><span class="meta">${c.c} · ${c.t} · ${c.f} followers · ${c.lg.join(', ')}</span><br><span class="meta">${hist(c)} · ${pairNote(i)}</span></div>
-    <button class="pill" data-act="creator" data-v="${i}">Report</button><button class="pill" data-act="samp" data-v="${i}" aria-pressed="${!!S.samp[i]}">${S.samp[i]?'Sample added':'Add sample'}</button><button class="pill" data-act="short" data-v="${i}" aria-pressed="${!!S.short[i]}">${S.short[i]?'Invited':'Invite'}</button></div>`).join('') || '<p class="meta">No creators match these filters.</p>'}</div>
+    ${t==='simple'?`<p class="meta">Collaboration: the creator posts on their own page. Content only: you receive the video and post it yourself.</p>`:`<label for="fHooks">Hooks that work, one per line (optional)<textarea id="fHooks" rows="3" placeholder="e.g. One spoon. That is the whole recipe."></textarea></label>`}
+    ${t==='full'?`<div class="two"><label for="fUp">Sales to reach next level (₹)<input id="fUp" type="number" min="500" step="500" value="2500"></label><label for="fRet">Top-level monthly retainer (₹)<input id="fRet" type="number" min="0" step="500" value="3000"></label></div>
+    <div class="two"><label for="fChT">Challenge sales target (₹)<input id="fChT" type="number" min="0" step="500" value="5000"></label><label for="fChB">Challenge bonus (₹)<input id="fChB" type="number" min="0" step="100" value="1000"></label></div>`:''}
+    <p class="meta" id="fErr" hidden>Describe what the video should show.</p>
+    <button class="btn accent wide" type="submit">Post brief</button>
+  </form></div>
+  <div class="sec"><h2>Your briefs</h2>
+  ${S.mine.map(b=>{ const apps=b.applications||[]; return `<div class="panel"><div class="row"><b>${esc(b.title)}</b><b>${payLabel(b)}</b></div><div class="row"><span class="meta">${b.status==='open'?left(daysLeft(b))+' · ':''}${apps.length} applicant${apps.length===1?'':'s'}</span>${b.status==='open'?`<button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`:'<span class="tag">Closed</span>'}</div>${apps.map(appRow).join('')}</div>`; }).join('') || '<p class="meta">Briefs you post appear here with everyone who applies.</p>'}
   </div></div>`; }
 
-BRIEFS.find(b=>b.id==='b4').pair = 'Sahyadri Masale';
-const LB = [['Sagar B.',18400],['Tanvi K.',12900],['Omkar K.',7600],['Sayali R.',4200],['Prajakta D.',1800]];
-const TOPV = [{ci:7,t:'“One spoon. That is the whole recipe.”',views:'1.2 lakh',sales:18400},{ci:6,t:'“Honest taste test against my usual.”',views:'64,000',sales:12900},{ci:1,t:'“My aai’s sabzi never tasted like this.”',views:'21,000',sales:7600}];
-
-function leader(b,s){
-  const rows = LB.map(([n,a])=>({n,a})); if(s) rows.push({n:'You', a:S.sales[b.id]||0, me:1});
-  rows.sort((x,y)=>y.a-x.a);
-  return `<h3>Top creators this month</h3>${rows.map((r,k)=>`<div class="lv${r.me?' on':''}"><span><b>${k+1}. ${r.n}</b></span><span><b>${rs(r.a)}</b> <span class="meta">in sales</span></span></div>`).join('')}<p class="meta">Sample ranking, updated as sales come in.</p>`;
-}
-
-function topVideos(){
-  return `<h2>Top videos</h2>${TOPV.map((t,i)=>{ const c=CREATORS[t.ci], st=S.adreq[i];
-    return `<div class="panel"><div class="row"><b>${c.n}</b>${i===0?'<span class="tag">Top seller</span>':''}</div><p>${t.t}</p><span class="meta">${t.views} views · ${rs(t.sales)} in sales (sample)</span>${st==='ok'?'<span class="tag ok" style="align-self:flex-start">Licensed for ads for 30 days</span>':`<div><button class="pill" data-act="adreq" data-v="${i}" aria-pressed="${st==='req'}">${st==='req'?'Demo: creator accepts':'Request ad rights for '+rs(2000)}</button></div>`}</div>`; }).join('')}`;
-}
-
-function pairPanel(){
-  return `<div class="panel"><span class="eyebrow">Brand pairing</span><b>Swaad Pickles reaches a similar audience</b><p class="meta">${S.pair>=2?'Paired. Your next sampling box and one shared brief will carry both products, with the cost split equally.':'Home cooks across Maharashtra follow creators who work with both of you. Share a sampling box or a brief and split the cost. Sample suggestion.'}</p>${S.pair>=2?'<span class="tag ok" style="align-self:flex-start">Paired</span>':`<div><button class="pill" data-act="pair" aria-pressed="${S.pair===1}">${S.pair===1?'Demo: they accept':'Propose a pairing'}</button></div>`}</div>`;
-}
-
-function sampBar(){
-  const n = Object.values(S.samp).filter(Boolean).length;
-  if(S.sampSent && !n) return `<div class="panel"><span class="eyebrow">Product sampling</span><b>${S.sampSent.n} sample${S.sampSent.n>1?'s':''} ${S.sampSent.done?'delivered':'on the way'}</b><p class="meta">Creators’ addresses stay hidden from you. Each creator confirms delivery, and posts only if they like the product.</p>${S.sampSent.done?'':'<div><button class="pill" data-act="sampDone" aria-pressed="true">Demo: creators confirm delivery</button></div>'}</div>`;
-  if(n) return `<div class="panel"><span class="eyebrow">Product sampling</span><b>${n} creator${n>1?'s':''} selected</b><button class="btn accent" data-act="sampSend">Send product to ${n} creator${n>1?'s':''}</button></div>`;
-  return '<p class="meta">Tap “Add sample” on several creators to send them your product in one go.</p>';
-}
-
-const DEF = {type:'', city:'', sort:'soon', mine:false, ccat:'', ccity:'', clang:'', cfol:'0', ceng:'0', csort:'fol'};
-const FDEF = {
-  b:[['type','Deal',[['','All'],['collab','Collaboration'],['content','Content only'],['affiliate','Affiliate']]],
-     ['city','Location',[['','Anywhere'],...['Mumbai','Thane','Pune','Nashik','Mahabaleshwar'].map(c=>[c,c])]],
-     ['mine','Eligibility',[[false,'All briefs'],[true,'Only ones I qualify for']]],
-     ['sort','Sort by',[['soon','Closing soon'],['pay','Highest pay']]]],
-  c:[['ccat','Category',[['','All'],...Object.entries(CATS)]],
-     ['ccity','City',[['','Anywhere'],...[...new Set(CREATORS.map(c=>c.c))].map(c=>[c,c])]],
-     ['clang','Language',[['','Any'],['Marathi','Marathi'],['Hindi','Hindi'],['English','English']]],
-     ['cfol','Followers',[['0','Any'],['1000','1,000+'],['5000','5,000+'],['10000','10,000+']]],
-     ['ceng','Engagement',[['0','Any'],['3','3%+'],['5','5%+']]],
-     ['csort','Sort by',[['fol','Most followers'],['eng','Highest engagement']]]]
-};
-function fbar(k){
-  const groups = FDEF[k], open = S.fo===k, same = (a,b) => String(a)===String(b);
-  const act = groups.filter(([f])=>!/sort/.test(f) && !same(S.flt[f],DEF[f]));
-  return `<div class="fbar"><button class="fbtn" data-act="fopen" data-v="${k}" aria-expanded="${open}">Filters${act.length?`<em>${act.length}</em>`:''}</button>${act.map(([f,lab,opts])=>`<button class="achip" data-act="flt" data-f="${f}" data-v="${DEF[f]}" aria-label="Remove ${lab} filter">${opts.find(o=>same(o[0],S.flt[f]))[1]} <span aria-hidden="true">×</span></button>`).join('')}</div>
-  ${open?`<div class="fpanel">${groups.map(([f,lab,opts])=>`<div class="fgroup"><span>${lab}</span><div class="chips" style="flex-wrap:wrap;overflow:visible">${opts.map(([v,t])=>`<button class="pill" data-act="flt" data-f="${f}" data-v="${v}" aria-pressed="${same(S.flt[f],v)}">${t}</button>`).join('')}</div></div>`).join('')}<div class="row"><button class="link" data-act="fclear" data-v="${k}">Clear all</button><button class="btn" data-act="fopen" data-v="${k}">Show results</button></div></div>`:''}`;
-}
-const LG = [['Marathi'],['Marathi','Hindi'],['Marathi','English'],['Marathi'],['Marathi','Hindi','English'],['Marathi'],['Marathi','Hindi'],['Marathi','Hindi','English']];
-CREATORS.forEach((c,i)=>{ c.lg = LG[i]; });
-const sel = (f, opts, label) => `<select data-f="${f}" aria-label="${label}">${opts.map(([v,t])=>`<option value="${v}"${String(S.flt[f])===String(v)?' selected':''}>${t}</option>`).join('')}</select>`;
 function clist(){
-  const F = S.flt, er = c => c.rep ? c.rep.er : 0;
-  return CREATORS.map((c,i)=>({c,i})).filter(({c})=>(!F.ccat||c.cat===F.ccat) && (!F.ccity||c.c===F.ccity) && (!F.clang||c.lg.includes(F.clang)) && c.fn>=+F.cfol && er(c)>=+F.ceng)
-    .sort((x,y)=> F.csort==='eng' ? er(y.c)-er(x.c) : y.c.fn-x.c.fn);
+  const F = S.flt;
+  return S.creators.filter(c=>(!F.ccat||(c.cats||[]).includes(F.ccat)) && (!F.ccity||c.city===F.ccity) && (!F.clang||(c.langs||[]).includes(F.clang)) && c.followers>=+F.cfol)
+    .sort((x,y)=> F.csort==='new' ? new Date(y.created_at)-new Date(x.created_at) : y.followers-x.followers);
 }
+function vFind(){
+  const list = clist();
+  return `<div class="sec"><span class="eyebrow">Find creators</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Creators on Boli</h1>
+  ${fbar('c')}
+  <p class="meta">${list.length} creator${list.length===1?'':'s'}. Follower counts are entered by creators; open their page to check.</p>
+  <div>${list.map(c=>{ const soc=url(c.social), sm=url(c.sample_link); return `<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b><br><span class="meta">${esc(c.city||'')} · ${(c.cats||[]).map(k=>CATS[k]||k).join(', ')} · ${num(c.followers)} followers · ${(c.langs||[]).join(', ')}${c.rate?' · usually '+rs(c.rate):''}</span></div>${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${sm?`<a class="pill" href="${esc(sm)}" target="_blank" rel="noopener">Sample video</a>`:''}</div>`; }).join('') || '<p class="meta">No creators match yet.</p>'}</div>
+  <p class="meta">To work with a creator, post a brief. Creators who fit will apply, and you can message them from there.</p></div>`; }
 
-const CITIES = ['Mumbai','Thane','Pune','Nashik','Kolhapur','Nagpur','Ratnagiri','Satara','Other'];
-const myCode = b => ((S.cu?S.cu.name:'').split(' ')[0].toUpperCase().replace(/[^A-Z]/g,'').slice(0,8)||'CREATOR') + b.comm;
-const chipsPick = (g, opts, on) => `<div class="chips" style="flex-wrap:wrap;overflow:visible" data-g="${g}">${opts.map(o=>`<button type="button" class="pill" data-act="pick" data-k="${o}" aria-pressed="${on.includes(o)}">${o}</button>`).join('')}</div>`;
-const picked = g => [...document.querySelectorAll(`[data-g="${g}"] [aria-pressed="true"]`)].map(e=>e.dataset.k);
+function vAccount(){
+  const m = S.me;
+  return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%"><span class="eyebrow">${m.role==='creator'?'Creator account':'Brand account'}</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${esc(m.name)}</h1>
+    <div class="panel"><div class="kv"><span>Email</span><span>${esc(S.user.email||'')}</span></div><div class="kv"><span>City</span><span>${esc(m.city||'')}</span></div>
+    ${m.role==='creator'?`<div class="kv"><span>Languages</span><span>${(m.langs||[]).join(', ')}</span></div><div class="kv"><span>You make</span><span>${(m.cats||[]).map(k=>CATS[k]||k).join(', ')}</span></div><div class="kv"><span>Followers</span><span>${num(m.followers)}</span></div>`:`<div class="kv"><span>Category</span><span>${CATS[(m.cats||[])[0]]||''}</span></div>`}
+    <button class="btn wide" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost wide" data-act="signout">Sign out</button></div></div>`; }
 
-function vOnb(){
-  const o = S.onb, steps = o.who==='creator' ? ['Account','Profile','Ready'] : ['Account','Ready'];
-  const bar = `<div class="track" style="grid-template-columns:repeat(${steps.length},1fr)">${steps.map((x,k)=>`<span class="${k<o.step?'on':''}">${x}</span>`).join('')}</div>`;
-  const h = t => `<h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${t}</h1>`;
-  let body;
-  if(o.who==='creator' && o.step===1) body = `${h('Create your creator account')}<p class="meta">Takes under a minute. We ask for payment details later, only when you are about to be paid.</p>
-    <form id="onbForm" class="panel" novalidate>
-      <div class="two"><label for="oMob">Mobile number<input id="oMob" inputmode="numeric" placeholder="Demo: leave blank"></label><label for="oOtp">Code sent by SMS<input id="oOtp" inputmode="numeric" placeholder="Demo: leave blank"></label></div>
-      <label for="oName">Full name<input id="oName" maxlength="40" placeholder="e.g. Meera Joshi"></label>
-      <label for="oCity">City or district<select id="oCity">${CITIES.map(c=>`<option>${c}</option>`).join('')}</select></label>
-      <b>Languages you create in</b>${chipsPick('lang',['Marathi','Hindi','English'],['Marathi'])}
-      <label for="oAge" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="oAge" type="checkbox" style="width:auto"> I am 18 or older</label>
-      <p class="meta" id="oErr" hidden>Add your name, pick at least one language and confirm your age.</p>
-      <button class="btn accent wide" type="submit">Continue</button>
-    </form>`;
-  else if(o.who==='creator' && o.step===2) body = `${h('Build your profile')}<p class="meta">This is what brands see when they look for creators.</p>
-    <form id="onbForm" class="panel" novalidate>
-      <b>Your social account</b><button type="button" class="btn ghost wide" data-act="connect" id="oConn">Connect Instagram or YouTube</button>
-      <p class="meta">Brands filter by followers, so we read the count from your account. No account? Skip this and take content-only work.</p>
-      <b>What you make</b>${chipsPick('cat',Object.values(CATS),[])}
-      <b>Deals you are open to</b>${chipsPick('deal',['Collaboration','Content only','Affiliate'],['Collaboration','Content only','Affiliate'])}
-      <label for="oLink">Link to a sample video (optional)<input id="oLink" placeholder="Paste a reel or video link"></label>
-      <label for="oRate">Your usual rate per video in ₹ (optional)<input id="oRate" type="number" min="0" step="100" placeholder="e.g. 1500"></label>
-      <p class="meta" id="oErr" hidden>Pick at least one thing you make.</p>
-      <button class="btn accent wide" type="submit">Finish</button>
-    </form>`;
-  else if(o.who==='creator') body = `${h('You are in, '+esc(S.cu.name.split(' ')[0])+'.')}
-    <div class="panel"><div class="kv"><span>City</span><span>${esc(S.cu.city)}</span></div><div class="kv"><span>Languages</span><span>${S.cu.langs.join(', ')}</span></div><div class="kv"><span>Followers</span><span>${S.cu.conn?'820 (sample)':'No account connected'}</span></div><div class="kv"><span>You make</span><span>${S.cu.cats.join(', ')}</span></div><div class="kv"><span>Open to</span><span>${S.cu.deals.join(', ')||'Any deal'}</span></div></div>
-    <p class="meta">Next: find a brand you like and apply. UPI and PAN are asked only when your first payment is due.</p>
-    <div><button class="btn accent" data-act="onbDone">${S.pend?'Back to the brief':'Browse brands'}</button></div>`;
-  else if(o.step===1) body = `${h('Create your brand account')}<p class="meta">One account for briefs, creator programmes and payments.</p>
-    <form id="onbForm" class="panel" novalidate>
-      <div class="two"><label for="oMail">Work email<input id="oMail" placeholder="Demo: leave blank"></label><label for="oOtp">Code sent by email<input id="oOtp" placeholder="Demo: leave blank"></label></div>
-      <label for="oBrand">Brand name<input id="oBrand" maxlength="40" placeholder="e.g. your masala brand"></label>
-      <label for="oSite">Website or Instagram page (optional)<input id="oSite" placeholder="Where creators can see your products"></label>
-      <div class="two"><label for="oBCat">Category<select id="oBCat">${Object.values(CATS).map(c=>`<option>${c}</option>`).join('')}</select></label><label for="oBCity">Based in<select id="oBCity">${CITIES.map(c=>`<option>${c}</option>`).join('')}</select></label></div>
-      <p class="meta" id="oErr" hidden>Add your brand name.</p>
-      <button class="btn accent wide" type="submit">Continue</button>
-    </form>`;
-  else body = `${h(esc(S.bu.name)+' is set up.')}
-    <div class="panel"><b>What happens next</b><ol class="steps"><li>Post your first brief and choose how you pay.</li><li>Creators apply. You see each one’s audience report.</li><li>Accept the ones you like, then approve their videos.</li><li>Fund each brief upfront. Boli pays creators when you approve, and sends you one GST invoice.</li></ol></div>
-    <div><button class="btn accent" data-act="onbDone">Post your first brief</button></div>`;
-  return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%">${bar}${body}</div>`;
+function vThread(){
+  const f = findApp(S.arg); if(!f) return `<p class="meta">This conversation is not available.</p>`;
+  return `<div class="sec" style="max-width:640px;margin:0 auto;width:100%"><button class="link" data-act="${isBrand()?'nav':'brief'}" data-v="${isBrand()?'dash':f.b.id}">‹ Back</button>
+    <span class="eyebrow">${esc(f.b.title)}</span><h2>Messages with ${esc(f.other)}</h2>
+    <div class="panel">${S.msgs.map(m=>`<div style="align-self:${m.sender_id===S.user.id?'flex-end':'flex-start'};max-width:85%"><p class="hook" style="${m.sender_id===S.user.id?'background:var(--accent-soft)':''}">${esc(m.body)}</p><span class="meta" style="font-size:.74rem">${new Date(m.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'})}</span></div>`).join('') || '<p class="meta">No messages yet. Say hello and agree the details here.</p>'}
+    <form id="msgForm" class="row" novalidate><input id="mBody" maxlength="1000" placeholder="Write a message" aria-label="Message"><button class="btn accent" type="submit">Send</button></form></div></div>`; }
+
+/* ---------- render ---------- */
+function nav(){
+  const items = !S.user || !S.me ? [['home','Briefs']] : isCreator() ? [['home','Briefs'],['work','My work'],['account','Account']] : [['dash','Dashboard'],['find','Creators'],['home','Briefs'],['account','Account']];
+  const html = items.map(([v,t])=>`<button class="nv" data-act="nav" data-v="${v}"${S.view===v?' aria-current="page"':''}>${t}</button>`).join('');
+  $('dnav').innerHTML = html; $('dockIn').innerHTML = html; $('dock').hidden = items.length<2;
+  $('acct').innerHTML = S.user ? '' : `<button data-act="auth" data-v="in" aria-pressed="false">Sign in</button><button data-act="auth" data-v="up" aria-pressed="true">Join</button>`;
+  $('acct').hidden = !!S.user;
 }
-
-function onbNext(){
-  const o = S.onb;
-  if(o.who==='creator' && o.step===1){
-    const name=$('oName').value.trim(), langs=picked('lang');
-    if(!name || !langs.length || !$('oAge').checked){ $('oErr').hidden=false; return; }
-    S.draft={name, city:$('oCity').value, langs}; o.step=2;
-  } else if(o.who==='creator'){
-    const cats=picked('cat'); if(!cats.length){ $('oErr').hidden=false; return; }
-    const conn=$('oConn').dataset.on==='1';
-    S.cu={...S.draft, cats, deals:picked('deal'), conn, upi:false}; ME=conn?820:0; o.step=3;
-  } else {
-    const name=$('oBrand').value.trim(); if(!name){ $('oErr').hidden=false; return; }
-    S.bu={name, cat:$('oBCat').value, city:$('oBCity').value}; S.fb=name; o.step=2;
-  }
-  render(); window.scrollTo(0,0);
-}
-
-function appRow(p,pi,a,ai){
-  const c=CREATORS[a.ci];
-  const nxt={applied:'Accept', accepted:p.aff?'':'Demo: creator sends video', sent:'Approve video', approved:'Release '+rs(p.pay)+' from Boli'}[a.st]||'';
-  const lab={applied:'Applied', accepted:p.aff?'Selling with their code':'Accepted, now shooting', sent:'Video received', approved:'Approved, payment due', paid:'Paid'}[a.st];
-  return `<div class="person t-${c.cat}" style="flex-wrap:wrap"><span class="av">${ini(c.n)}</span><div><b>${c.n}</b><br><span class="meta">${c.f} followers · ${lab}</span><br><span class="meta">${hist(c)} · ${pairNote(a.ci)}</span></div><button class="pill" data-act="creator" data-v="${a.ci}">Report</button>${nxt?`<button class="pill" data-act="app" data-v="${pi}-${ai}" aria-pressed="true">${nxt}</button>`:''}</div>`;
-}
-
-function report(c, full){
-  const r = c.rep;
-  const basic = `<div class="stat"><div><b>${c.f}</b><span>Followers</span></div>${r?`<div><b>${r.er}%</b><span>Engagement rate</span></div><div><b>${r.pw} a week</b><span>Posts</span></div>`:''}</div>`;
-  if(!r) return basic + '<p class="meta">Not enough public activity yet for an audience report. Judge this creator on their sample videos.</p>';
-  if(!full) return basic;
-  return basic + `<div><div class="row" style="flex-wrap:wrap"><b>Audience language</b><span class="meta">Marathi ${r.lang[0]}% · Hindi ${r.lang[1]}% · English ${r.lang[2]}%</span></div><div class="meter">${r.lang.map(x=>`<i style="width:${x}%"></i>`).join('')}</div></div>
-    <div class="kv"><span>Comments that are real conversation</span><span>${r.real}%</span></div>
-    <div class="kv"><span>Comments asking the price or where to buy</span><span>${r.intent}%</span></div>
-    <div class="kv"><span>Audience tone</span><span>${r.tone}</span></div>
-    <div class="kv"><span>Sponsored posts against usual posts</span><span>${r.sp}</span></div>
-    <div class="kv"><span>What the audience responds to</span><span>${r.top}</span></div>
-    <p class="meta">Sample figures. Built from the creator’s public posts and comments, refreshed every 30 days.</p>`;
-}
-
-function vCreator(){
-  const i = S.creator, c = CREATORS[i], un = S.plan==='pro' || !!S.unlocked[i];
-  return `<button class="link" data-act="closeCreator">‹ All creators</button>
-  <div class="split narrow">
-    <div class="sec"><div class="person t-${c.cat}" style="border:0"><span class="av">${ini(c.n)}</span><div><b>${c.n}</b><br><span class="meta">${c.c} · ${c.t}</span></div></div>
-      <button class="btn ${S.short[i]?'ghost':'accent'} wide" data-act="short" data-v="${i}">${S.short[i]?'Invited':'Invite to a brief'}</button>
-      <div class="panel"><span class="eyebrow">Track record on Boli</span><p>${hist(c)}</p><div class="kv"><span>Your Boli fee with ${esc(c.n.split(' ')[0])}</span><span>${feeFor(i)}%${feeFor(i)===FEE2?', repeat partner':''}</span></div><p class="meta">Ratings come only from jobs done through Boli.</p></div>
-      <div class="lock"><b>Contact details</b><span class="meta">Phone number and social handles are shared once you hire ${esc(c.n.split(' ')[0])} through Boli. Until then, invites and messages go through Boli.</span></div>
-      <p class="meta">Sample profile. Creates in Marathi.</p></div>
-    <div class="sec"><h2>Audience report</h2>
-      <div class="panel">${report(c,un)}${c.rep&&!un?`<div class="lock"><b>Full audience report</b><span class="meta">Comment quality, audience language, buying interest, tone, and how sponsored posts perform.</span>${S.credits?`<button class="btn accent" data-act="unlock" data-v="${i}">Unlock for 1 credit</button>`:`<button class="btn accent" data-act="pro">Upgrade to Boli Pro · ₹1,999 a month</button>`}<span class="meta">${S.credits} of 3 free unlocks left this month. Boli Pro gives unlimited reports.</span></div>`:''}</div></div>
-  </div>`; }
-
 function render(){
-  const fbEl=$('fBrand'), faEl=$('fAsk'); if(fbEl) S.fb=fbEl.value; if(faEl) S.fa=faEl.value;
-  if($('fPay')) S.fp=Math.max(500,+$('fPay').value||1500); if($('fNum')) S.fn=Math.max(1,+$('fNum').value||1);
-  const v = S.onb ? vOnb() : S.role==='brand' ? (S.creator!=null ? vCreator() : vBrand()) : S.brief ? vBrief() : S.tab==='learn' ? vLearn() : S.tab==='earn' ? vEarn() : vHome();
-  $('view').innerHTML = v;
-  const creator = S.role==='creator';
-  $('roleCreator').setAttribute('aria-pressed', creator);
-  $('roleBrand').setAttribute('aria-pressed', !creator);
-  $('dock').hidden = !creator || !!S.onb;
-  document.querySelectorAll('.nv').forEach(b=>{ if(b.closest('.dnav')) b.hidden = !creator; if(creator && b.dataset.v===S.tab) b.setAttribute('aria-current','page'); else b.removeAttribute('aria-current'); });
-  const n = Object.keys(S.status).length; $('dockN').hidden = !n; $('dockN').textContent = n;
+  const fa=$('fAsk'); if(fa) S.fa=fa.value;
+  if(S.user && !S.me && S.view!=='profile') S.view='profile';
+  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, thread:vThread};
+  const need_me = ['work','dash','find','account','thread'];
+  if(need_me.includes(S.view) && !S.me) S.view = 'home';
+  $('view').innerHTML = (V[S.view]||vHome)();
+  nav();
 }
+function go(view, arg){ S.view=view; S.arg=arg===undefined?null:arg; render(); window.scrollTo(0,0); }
+async function run(fn){ try{ await fn(); }catch(e){ toast(e.message||'Something went wrong. Please try again.'); } }
 
+/* ---------- events ---------- */
 document.addEventListener('click', e=>{
   const el = e.target.closest('[data-act]'); if(!el || el.disabled) return;
   const a = el.dataset.act, v = el.dataset.v;
   if(a==='langs'){ const p=$('langs'); p.hidden=!p.hidden; $('locBtn').setAttribute('aria-expanded', !p.hidden); return; }
-  if(a==='jump'){ $('briefs').scrollIntoView({block:'start'}); return; }
   if(a==='pick'){ el.setAttribute('aria-pressed', el.getAttribute('aria-pressed')!=='true'); return; }
-  if(a==='connect'){ el.dataset.on='1'; el.textContent='Connected · 820 followers (sample)'; return; }
-  if(a==='startC'){ if(S.cu){ S.role='creator'; S.tab='home'; S.brief=null; render(); $('briefs').scrollIntoView({block:'start'}); return; } S.role='creator'; S.onb={who:'creator',step:1}; }
-  if(a==='home'){ S.role='creator'; S.tab='home'; S.brief=null; S.cat=null; S.q=''; S.onb=null; }
-  else if(a==='role'){ S.role=v; S.brief=null; S.creator=null; S.onb=(v==='brand'&&!S.bu)?{who:'brand',step:1}:null; }
-  else if(a==='tab'){ S.tab=v; S.brief=null; S.onb=null; }
-  else if(a==='cat'){ S.cat=v||null; }
-  else if(a==='type'){ S.type=v||null; }
-  else if(a==='bf'){ S.bf=+v; }
-  else if(a==='brief'){ S.brief=v; S.role='creator'; }
-  else if(a==='back'){ S.brief=null; S.tab='home'; }
-  else if((a==='apply'||a==='join') && !S.cu){ S.pend=v; S.onb={who:'creator',step:1}; toast('Create your account first. It takes a minute.'); }
-  else if(a==='apply'){ S.status[v]='applied'; toast('Applied. Shoot and send your video next.'); }
-  else if(a==='approve'){ S.status[S.brief]='approved'; toast('Approved by the brand'); }
-  else if(a==='getpaid'){ const b=BRIEFS.find(x=>x.id===S.brief); S.status[b.id]='paid'; S.earned+=b.pay; toast('Boli released '+rs(b.pay)+' to your UPI'); }
-  else if(a==='onbDone'){ const p=S.pend; S.onb=null; S.pend=null; if(S.role==='creator'){ S.tab='home'; S.brief=p; } }
-  else if(a==='app'){ const [pi,ai]=v.split('-').map(Number), P=S.posted[pi], ap=P.apps[ai]; ap.st={applied:'accepted',accepted:'sent',sent:'approved',approved:'paid'}[ap.st]||ap.st;
-    if(ap.st==='paid'){ const f=feeFor(ap.ci); P.held-=P.pay; S.jobs[ap.ci]=(S.jobs[ap.ci]||0)+1; toast('Released '+rs(P.pay)+' to '+CREATORS[ap.ci].n.split(' ')[0]+' · Boli fee '+f+'%'); }
-    else toast({accepted:'Creator accepted',sent:'Video received',approved:'Video approved'}[ap.st]); }
-  else if(a==='fund'){ S.posted[+v].funded=true; toast(rs(S.posted[+v].total)+' received. Your brief is live.'); }
-  else if(a==='pro'){ S.plan='pro'; toast('Boli Pro is on (demo). No money taken.'); }
-  else if(a==='invoice'){ toast('Sample invoice: demo only, nothing is downloaded'); }
-  else if(a==='send'){ S.status[S.brief]='sent'; toast('Video sent to the brand'); }
-  else if(a==='pay'){ S.paying=true; }
-  else if(a==='cancelpay'){ S.paying=false; }
-  else if(a==='paid'){ S.paying=false; S.enrolled=true; toast('You are in. Week 1 is open.'); }
-  else if(a==='mod'){ S.open = S.open===+v ? -1 : +v; }
-  else if(a==='lesson'){ if(S.done[v]) delete S.done[v]; else S.done[v]=true; }
-  else if(a==='short'){ S.short[v]=!S.short[v]; }
-  else if(a==='join'){ S.status[v]='joined'; toast('You are in. Your code is ready.'); }
-  else if(a==='sale'){ const b=BRIEFS.find(x=>x.id===v), k=lvIdx(b); S.sales[v]=(S.sales[v]||0)+600; const k2=lvIdx(b); toast(k2>k ? 'Level up: '+b.lv[k2].n : 'Sale recorded: ₹600'); }
-  else if(a==='tpl'){ S.fb=$('fBrand').value; S.fa=$('fAsk').value; S.tpl=v; }
-  else if(a==='creator'){ S.creator=+v; }
-  else if(a==='fopen'){ S.fo = S.fo===v ? null : v; }
-  else if(a==='flt'){ S.flt[el.dataset.f] = v==='true' ? true : v==='false' ? false : v; }
-  else if(a==='fclear'){ FDEF[v].forEach(([f])=>{ S.flt[f]=DEF[f]; }); }
-  else if(a==='samp'){ S.samp[v]=!S.samp[v]; }
-  else if(a==='sampSend'){ S.sampSent={n:Object.values(S.samp).filter(Boolean).length, done:false}; S.samp={}; toast('Samples on the way'); }
-  else if(a==='sampDone'){ S.sampSent.done=true; toast('Delivery confirmed'); }
-  else if(a==='adreq'){ S.adreq[v]=S.adreq[v]?'ok':'req'; toast(S.adreq[v]==='ok'?'Creator accepted. Video licensed.':'Request sent to the creator'); }
-  else if(a==='pair'){ S.pair++; toast(S.pair>=2?'Pairing confirmed':'Proposal sent'); }
-  else if(a==='adyes'){ S.ad[v]='yes'; S.earned+=2000; toast('Accepted: ₹2,000 added'); }
-  else if(a==='adno'){ S.ad[v]='no'; }
-  else if(a==='ms'){ S.ms=+v; }
-  else if(a==='closeCreator'){ S.creator=null; }
-  else if(a==='unlock'){ if(S.credits>0){ S.credits--; S.unlocked[v]=true; toast('Report unlocked'); } }
+  if(a==='arole'){ S.authRole=el.dataset.k; el.parentElement.querySelectorAll('.pill').forEach(p=>p.setAttribute('aria-pressed', p===el)); return; }
+  if(a==='home') return go(isBrand()&&!v?'home':'home');
+  if(a==='nav') return go(v);
+  if(a==='brief') return go('brief', v);
+  if(a==='auth'){ S.authMode=v; return go('auth'); }
+  if(a==='amode'){ S.authMode = S.authMode==='up'?'in':'up'; return go('auth'); }
+  if(a==='join'){ if(S.user) return go(isBrand()?'dash':'home'); S.authRole=v; S.authMode='up'; if(S.view==='brief') S.pend=S.arg; return go('auth'); }
+  if(a==='signout') return run(async()=>{ await sb.auth.signOut(); S.user=null; await loadAll(); go('home'); toast('Signed out'); });
+  if(a==='apply') return run(async()=>{ await q(sb.from('applications').insert({brief_id:v, creator_id:S.user.id})); await loadAll(); render(); toast('Applied. You will hear back here.'); });
+  if(a==='status') return run(async()=>{ const s=el.dataset.s; await q(sb.from('applications').update({status:s}).eq('id',v)); await loadAll(); render(); toast({accepted:'Creator accepted',declined:'Application declined',approved:'Video approved',paid:'Marked as paid'}[s]||'Updated'); });
+  if(a==='closeBrief') return run(async()=>{ await q(sb.from('briefs').update({status:'closed'}).eq('id',v)); await loadAll(); render(); toast('Brief closed'); });
+  if(a==='thread') return run(async()=>{ S.msgs = await q(sb.from('messages').select('*').eq('application_id',v).order('created_at')); go('thread', v); });
   const y = window.scrollY;
-  render();
-  if(S.onb || ['brief','tab','role','home','creator','closeCreator','onbDone'].includes(a)) window.scrollTo(0,0);
-  else if(a==='back'){ const s=$('briefs'); if(s) s.scrollIntoView({block:'start'}); }
-  else window.scrollTo(0,y);
+  if(a==='cat') S.cat = v||null;
+  else if(a==='fopen') S.fo = S.fo===v ? null : v;
+  else if(a==='flt') S.flt[el.dataset.f] = v==='true' ? true : v==='false' ? false : v;
+  else if(a==='fclear') fdef(v).forEach(([f])=>{ S.flt[f]=DEF[f]; });
+  else if(a==='tpl') S.tpl = v;
+  else return;
+  render(); window.scrollTo(0,y);
 });
 
-document.addEventListener('change', e=>{ const f=e.target.dataset.f; if(!f) return; S.flt[f] = e.target.type==='checkbox' ? e.target.checked : e.target.value; const y=window.scrollY; render(); window.scrollTo(0,y); });
+document.addEventListener('input', e=>{ if(e.target.id==='q'){ S.q=e.target.value; $('grid').innerHTML=gridHTML(); } });
 
-document.addEventListener('input', e=>{ if(e.target.id==='q'){ S.q=e.target.value; $('grid').innerHTML=gridHTML(); }
-  if(e.target.id==='fPay'||e.target.id==='fNum'){ S.fp=Math.max(0,+$('fPay').value||0); S.fn=Math.max(1,+$('fNum').value||1); $('sum').innerHTML=sumHTML(); } });
-
+function showErr(id, msg){ const p=$(id); p.textContent=msg; p.hidden=false; }
 document.addEventListener('submit', e=>{
-  if(e.target.id==='onbForm'){ e.preventDefault(); onbNext(); return; }
-  if(e.target.id==='payForm'){ e.preventDefault(); const b=BRIEFS.find(x=>x.id===S.brief); S.cu.upi=true; S.status[b.id]='paid'; S.earned+=b.pay; render(); toast('Boli released '+rs(b.pay)+' to your UPI'); return; }
-  if(e.target.id!=='briefForm') return;
-  e.preventDefault();
-  const brand=$('fBrand').value.trim(), ask=$('fAsk').value.trim();
-  if(!brand||!ask){ $('fErr').hidden=false; return; }
-  const num=Math.max(1, +$('fNum').value||1);
-  const nb={id:'p'+Date.now(), brand, city:$('fCity').value, cat:$('fCat').value, title:ask, days:10, secs:30, minF:+$('fMin').value};
-  if(S.tpl==='simple'){ nb.pay=Math.max(500, +$('fPay').value||1500); nb.gives=rs(nb.pay); nb.type=$('fType').value; }
-  else {
-    nb.type='affiliate'; nb.pay=0; nb.comm=Math.min(50, Math.max(1, +$('fComm').value||10)); nb.gives='Commission on every sale'; nb.minV=+$('fVid').value||0;
-    const hk=$('fHooks').value.split('\n').map(x=>x.trim()).filter(Boolean); if(hk.length) nb.hooks=hk;
-    if(S.tpl==='full'){
-      const up=Math.max(500, +$('fUp').value||2500), ret=Math.max(0, +$('fRet').value||0);
-      nb.lv=[{n:'Starter',at:0,c:nb.comm,r:0},{n:'Rising',at:up,c:nb.comm+2,r:Math.round(ret/300)*100},{n:'Partner',at:up*4,c:nb.comm+5,r:ret}];
-      const ct=+$('fChT').value||0, cb=+$('fChB').value||0; if(ct&&cb) nb.challenge={t:'Sell '+rs(ct)+' this month', bonus:cb};
+  const id = e.target.id; e.preventDefault();
+  if(id==='authForm') return run(async()=>{
+    const email=$('aEmail').value.trim(), password=$('aPass').value;
+    if(!/^\S+@\S+\.\S+$/.test(email) || password.length<8) return showErr('aErr','Enter a valid email and a password of at least 8 characters.');
+    $('aBtn').disabled = true;
+    const r = S.authMode==='up' ? await sb.auth.signUp({email,password}) : await sb.auth.signInWithPassword({email,password});
+    $('aBtn').disabled = false;
+    if(r.error) return showErr('aErr', /already registered/i.test(r.error.message)?'That email already has an account. Sign in instead.':/invalid login/i.test(r.error.message)?'That email and password do not match.':r.error.message);
+    if(!r.data.session) return showErr('aErr','Check your email to confirm your account, then sign in.');
+    S.user = r.data.user; await loadAll();
+    if(!S.me) return go('profile');
+    afterLogin();
+  });
+  if(id==='profForm') return run(async()=>{
+    const role = S.me ? S.me.role : S.authRole, name=$('pName').value.trim();
+    if(!name) return showErr('pErr', role==='creator'?'Add your name.':'Add your brand name.');
+    let row = {id:S.user.id, role, name, city:$('pCity').value};
+    if(role==='creator'){
+      const langs=picked('lang'), cats=picked('cat');
+      if(!langs.length || !cats.length) return showErr('pErr','Pick at least one language and one thing you make.');
+      if(!S.me && !$('pAge').checked) return showErr('pErr','You need to be 18 or older to join.');
+      const social=$('pSocial').value.trim(), sample=$('pSample').value.trim();
+      if((social&&!url(social)) || (sample&&!url(sample))) return showErr('pErr','Links should start with https://');
+      row = {...row, langs, cats, deals:picked('deal'), social:social||null, followers:Math.max(0,parseInt($('pFol').value)||0), sample_link:sample||null, rate:parseInt($('pRate').value)||null};
+    } else {
+      const site=$('pSite').value.trim(); if(site&&!url(site)) return showErr('pErr','The link should start with https://');
+      row = {...row, cats:[$('pCat').value], site:site||null};
     }
-  }
-  BRIEFS.unshift(nb);
-  const cr=nb.pay*num, fee=Math.round(cr*FEE1/100), total=cr+fee+Math.round(fee*.18);
-  S.posted.unshift({brand, title:ask, num, label:payLabel(nb), pay:nb.pay, aff:nb.type==='affiliate', funded:nb.type==='affiliate', total, held:cr, apps:CREATORS.map((c,i)=>i).filter(i=>CREATORS[i].fn>=nb.minF).slice(0,3).map(ci=>({ci,st:'applied'}))}); S.fb=S.bu?S.bu.name:''; S.fa=''; $('fAsk').value=''; $('fBrand').value=S.fb;
-  render(); toast(nb.type==='affiliate'?'Programme posted':'Brief posted. Fund it to go live.');
+    const isNew = !S.me;
+    await q(sb.from('profiles').upsert(row));
+    await loadAll(); toast(isNew?'Welcome to Boli':'Profile saved');
+    isNew ? afterLogin() : go('account');
+  });
+  if(id==='vidForm') return run(async()=>{
+    const link=$('vLink').value.trim(); if(!url(link)) return toast('Paste a link that starts with https://');
+    await q(sb.from('applications').update({status:'sent', video_link:link}).eq('id', myApp(S.arg).id)); await loadAll(); render(); toast('Video sent to the brand');
+  });
+  if(id==='msgForm') return run(async()=>{
+    const body=$('mBody').value.trim(); if(!body) return;
+    await q(sb.from('messages').insert({application_id:S.arg, sender_id:S.user.id, body}));
+    S.msgs = await q(sb.from('messages').select('*').eq('application_id',S.arg).order('created_at')); render(); $('mBody').focus();
+  });
+  if(id==='briefForm') return run(async()=>{
+    const title=$('fAsk').value.trim(); if(title.length<3) { $('fErr').hidden=false; return; }
+    const nb = {brand_id:S.user.id, brand_name:S.me.name, title, cat:$('fCat').value, city:$('fCity').value, min_followers:+$('fMin').value, creators_needed:Math.max(1,+$('fNum').value||1)};
+    if(S.tpl==='simple'){ nb.type=$('fType').value; nb.pay=Math.max(100,+$('fPay').value||0); }
+    else {
+      nb.type='affiliate'; nb.pay=0; nb.comm=Math.min(50,Math.max(1,+$('fComm').value||10)); nb.min_videos=Math.max(0,+$('fVid').value||0);
+      nb.hooks=$('fHooks').value.split('\n').map(x=>x.trim()).filter(Boolean).slice(0,8);
+      if(S.tpl==='full'){
+        const up=Math.max(500,+$('fUp').value||2500), ret=Math.max(0,+$('fRet').value||0);
+        nb.levels=[{n:'Starter',at:0,c:nb.comm,r:0},{n:'Rising',at:up,c:Math.min(50,nb.comm+2),r:Math.round(ret/300)*100},{n:'Partner',at:up*4,c:Math.min(50,nb.comm+5),r:ret}];
+        const ct=+$('fChT').value||0, cb=+$('fChB').value||0; if(ct&&cb) nb.challenge={t:'Sell '+rs(ct)+' this month', bonus:cb};
+      }
+    }
+    await q(sb.from('briefs').insert(nb)); S.fa=''; $('fAsk').value=''; await loadAll(); render(); toast('Brief posted. Creators can see it now.');
+  });
 });
 
-render();
+function afterLogin(){ const p=S.pend; S.pend=null; if(p && isCreator()) return go('brief', p); go(isBrand()?'dash':'home'); }
+
+(async function start(){
+  try{
+    const {data:{session}} = await sb.auth.getSession(); S.user = session ? session.user : null;
+    await loadAll();
+    S.view = S.user && S.me && isBrand() ? 'dash' : 'home';
+  }catch(e){ $('view').innerHTML = '<p class="meta">Boli could not load. Check your connection and refresh the page.</p>'; return; }
+  render();
+})();
 </script>
-</body></html>
+</body>
+</html>
