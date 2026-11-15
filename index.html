@@ -173,6 +173,12 @@ html{-webkit-text-size-adjust:100%} body{margin:0} [hidden]{display:none!importa
 a.pill{text-decoration:none;color:inherit;display:inline-block}
 .seg button[aria-pressed="false"]{color:var(--ink)}
 #msgForm input{flex:1}
+.tdesc{display:flex;flex-direction:column;gap:8px}
+.tdesc button{text-align:left;background:var(--bg);border:1.5px solid var(--line);border-radius:14px;padding:11px 14px;display:flex;flex-direction:column;gap:2px}
+.tdesc button b{font-family:var(--display);font-size:1rem}
+.tdesc button span{color:var(--muted);font-size:.88rem;font-weight:400}
+.tdesc button[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.tdesc button[aria-pressed="true"] span{color:var(--ink)}
 </style>
 </head>
 <body>
@@ -203,6 +209,8 @@ const sb = supabase.createClient('https://logstpicpmemtbjuxfvk.supabase.co', 'sb
 const CATS = {food:'Food', home:'Home', fashion:'Fashion', beauty:'Beauty', travel:'Travel', tech:'Apps & tech'};
 const TYPES = {content:'UGC video', collab:'Dedicated post', integration:'Integration', affiliate:'Affiliate'};
 const DEALS = TYPES;
+const COMM_ON = false;
+const DEAL_TYPES = Object.entries(TYPES).filter(([k])=>COMM_ON || k!=='affiliate');
 const TYPE_D = {content:'you make the video and the brand posts it on its own page', collab:'you post a video about the brand on your own page', integration:'you feature the product inside one of your regular videos, on your own page', affiliate:'you post with your own code and earn on each sale'};
 const CITIES = ['Mumbai','Thane','Pune','Nashik','Nagpur','Kolhapur','Chhatrapati Sambhajinagar','Solapur','Satara','Sangli','Ratnagiri','Sindhudurg','Raigad','Ahilyanagar','Jalgaon','Amravati','Other'];
 const LANGS = ['Marathi','Hindi','English'];
@@ -275,7 +283,7 @@ const picked = g => [...document.querySelectorAll(`[data-g="${g}"] [aria-pressed
 const opts = (list, cur) => list.map(([v,t])=>`<option value="${esc(v)}"${same(v,cur)?' selected':''}>${esc(t)}</option>`).join('');
 
 function fdef(k){
-  if(k==='b') return [['type','Deal',[['','All'],...Object.entries(TYPES)]],
+  if(k==='b') return [['type','Deal',[['','All'],...DEAL_TYPES]],
     ['comp','What you get',[['','Anything'],['paid','Paid deals'],['product','Product only']]],
     ['city','Location',[['','Anywhere'],...[...new Set(S.briefs.map(b=>b.city).filter(c=>c!=='All Maharashtra'))].map(c=>[c,c])]],
     ...(isCreator()?[['mine','Eligibility',[[false,'All briefs'],[true,'Only ones I qualify for']]]]:[]),
@@ -314,10 +322,10 @@ function vHome(){
     </div>
     ${fan.length?`<div class="fan">${fan.map(b=>cover(b,'div')).join('')}</div>`:''}
   </section>
-  <ul class="facts"><li>UGC videos, dedicated posts, integrations or commission deals</li><li>Brands set the follower range they want</li><li>Creators of every size can join</li></ul>
+  <ul class="facts"><li>UGC videos, dedicated posts and integrations</li><li>Brands set the follower range they want</li><li>Creators of every size can join</li></ul>
   <section class="sec"><h2>How it works</h2><div class="split">
     <div class="panel"><span class="eyebrow">If you are a creator</span><ol class="steps"><li>Create your account.</li><li>Add your city, languages and what you make.</li><li>Browse brands and apply to the briefs you like.</li><li>Once a brand accepts you, shoot and send your video.</li><li>The brand approves it and pays you.</li></ol><div><button class="btn accent" data-act="join" data-v="creator">Start as a creator</button></div></div>
-    <div class="panel"><span class="eyebrow">If you are a brand</span><ol class="steps"><li>Create your brand account.</li><li>Choose what you want, and what the creator gets: payment, product or commission.</li><li>Post a brief with the follower range you want.</li><li>Review applicants, or browse creators yourself.</li><li>Approve the videos you like and pay the creator.</li></ol><div><button class="btn" data-act="join" data-v="brand">Start as a brand</button></div></div>
+    <div class="panel"><span class="eyebrow">If you are a brand</span><ol class="steps"><li>Create your brand account.</li><li>Choose what you want, and what the creator gets: payment, product or both.</li><li>Post a brief with the follower range you want.</li><li>Review applicants, or browse creators yourself.</li><li>Approve the videos you like and pay the creator.</li></ol><div><button class="btn" data-act="join" data-v="brand">Start as a brand</button></div></div>
   </div></section>`}
   <section class="sec" id="briefs">
     <div class="row" style="flex-wrap:wrap"><h2>Brands looking for creators</h2><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Search by product, brand or city" aria-label="Search briefs"></div>
@@ -339,6 +347,7 @@ function vAuth(){
       <label for="aPass">Password<input id="aPass" type="password" autocomplete="${up?'new-password':'current-password'}" minlength="8" required placeholder="${up?'At least 8 characters':'Your password'}"></label>
       ${up?`<details><summary class="meta" style="cursor:pointer">Read the Boli terms</summary><ol class="steps" style="margin-top:10px"><li>Deals that start on Boli are agreed, delivered and paid through Boli.</li><li>Do not share phone numbers, emails, social handles or payment details with the other side before a video is approved.</li><li>Give accurate details about yourself, your followers and your brand.</li><li>Creators own their videos until the brand pays for them. Paid posts carry the paid partnership label.</li><li>Boli may charge brands a service fee on each deal. The fee is always shown before a deal is confirmed.</li><li>Accounts that break these terms can be suspended or removed.</li></ol></details>
       <label for="aTerms" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="aTerms" type="checkbox" style="width:auto"> I agree to the Boli terms</label>`:''}
+      <div class="lock" id="aConfirm" hidden><b>Create a new account for <span id="aConfEmail"></span>?</b><span class="meta">Check the spelling of the email. If you already have a Boli account, choose Sign in below.</span></div>
       <p class="meta" id="aErr" hidden></p>
       <button class="btn accent wide" type="submit" id="aBtn">${up?'Create account':'Sign in'}</button>
       <button type="button" class="link" data-act="amode">${up?'Already have an account? Sign in':'New here? Create an account'}</button>
@@ -355,7 +364,7 @@ function vProfile(){
       <label for="pCity">City or district<select id="pCity">${opts(CITIES.map(c=>[c,c]), m.city||'Mumbai')}</select></label>
       <b>Languages you create in</b>${chipsPick('lang', LANGS.map(l=>[l,l]), m.langs||['Marathi'])}
       <b>What you make</b>${chipsPick('cat', Object.entries(CATS), m.cats||[])}
-      <b>Deals you are open to</b>${chipsPick('deal', Object.entries(DEALS), m.deals||Object.keys(DEALS))}
+      <b>Deals you are open to</b>${chipsPick('deal', DEAL_TYPES, m.deals||DEAL_TYPES.map(x=>x[0]))}
       <label for="pSocial">Instagram or YouTube link (optional)<input id="pSocial" value="${esc(m.social)}" placeholder="https://instagram.com/yourname"></label>
       <p class="meta">Kept private. A brand sees this link only after it accepts your application.</p>
       <label for="pFol">Followers on that account<input id="pFol" type="number" min="0" step="1" value="${m.followers||0}"></label>
@@ -442,10 +451,10 @@ function vDash(){
   <div class="sec"><span class="eyebrow">${esc(S.me.name)}</span><h1 style="font-size:clamp(1.8rem,5vw,2.6rem)">Post a brief</h1>
   <form id="briefForm" class="panel" novalidate>
     <b>What does the creator get?</b>
-    <div class="chips" style="flex-wrap:wrap;overflow:visible">${Object.entries(TPL).map(([k,v])=>`<button type="button" class="pill" data-act="tpl" data-v="${k}" aria-pressed="${t===k}">${v}</button>`).join('')}</div>
+    <div class="chips" style="flex-wrap:wrap;overflow:visible">${Object.entries(TPL).filter(([k])=>COMM_ON || (k!=='affiliate' && k!=='full')).map(([k,v])=>`<button type="button" class="pill" data-act="tpl" data-v="${k}" aria-pressed="${t===k}">${v}</button>`).join('')}</div>
     <p class="meta">${TPLD[t]}</p>
-    ${comm?'':`<label for="fType">What you want<select id="fType">${opts([['content','UGC video'],['collab','Dedicated post'],['integration','Integration']], S.ft)}</select></label>
-    <p class="meta">UGC video: you receive the video and post it yourself. Dedicated post: the creator posts a video about you on their page. Integration: your product features inside one of the creator’s regular videos.</p>`}
+    ${comm?'':`<b>What do you want?</b>
+    <div class="tdesc">${[['content','UGC video','You receive the video and post it on your own page.'],['collab','Dedicated post','The creator posts a video about you on their page.'],['integration','Integration','Your product features inside one of the creator’s regular videos, on their page.']].map(([k,n,d])=>`<button type="button" data-act="ftype" data-v="${k}" aria-pressed="${S.ft===k}"><b>${n}</b><span>${d}</span></button>`).join('')}</div>`}
     <label for="fAsk">What should the video show?<textarea id="fAsk" rows="3" maxlength="200" placeholder="e.g. A home cook making misal with our masala">${esc(S.fa)}</textarea></label>
     <div class="two">
       <label for="fCat">Category<select id="fCat">${opts(Object.entries(CATS), (S.me.cats||[])[0]||'food')}</select></label>
@@ -465,7 +474,7 @@ function vDash(){
     <div class="two"><label for="fChT">Challenge sales target (₹)<input id="fChT" type="number" min="0" step="500" value="5000"></label><label for="fChB">Challenge bonus (₹)<input id="fChB" type="number" min="0" step="100" value="1000"></label></div>`:''}
     <p class="meta" id="fErr" hidden>Describe what the video should show.</p>
     <button class="btn accent wide" type="submit">Post brief</button>
-    <p class="meta">Free while in-app payments are being set up. After that, Boli adds a ${FEE.payg}% fee on each deal, or ${FEE.sub}% on the subscription plan.</p>
+    <p class="meta">Free while in-app payments are being set up. After that, Boli adds a ${FEE.payg}% fee on each paid deal, or ${FEE.sub}% on the subscription plan.</p>
   </form></div>
   <div class="sec"><h2>Your briefs</h2>
   ${S.mine.map(b=>{ const apps=b.applications||[]; return `<div class="panel"><div class="row"><b>${esc(b.title)}</b><b>${payLabel(b)}</b></div><div class="row"><span class="meta">${b.status==='open'?left(daysLeft(b))+' · ':''}${apps.length} applicant${apps.length===1?'':'s'}</span>${b.status==='open'?`<button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`:'<span class="tag">Closed</span>'}</div>${apps.map(a=>appRow(a,b)).join('')}</div>`; }).join('') || '<p class="meta">Briefs you post appear here with everyone who applies.</p>'}
@@ -530,6 +539,7 @@ document.addEventListener('click', e=>{
   const a = el.dataset.act, v = el.dataset.v;
   if(a==='langs'){ const p=$('langs'); p.hidden=!p.hidden; $('locBtn').setAttribute('aria-expanded', !p.hidden); return; }
   if(a==='pick'){ el.setAttribute('aria-pressed', el.getAttribute('aria-pressed')!=='true'); return; }
+  if(a==='ftype'){ S.ft=v; el.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed', x===el)); return; }
   if(a==='arole'){ S.authRole=el.dataset.k; el.parentElement.querySelectorAll('.pill').forEach(p=>p.setAttribute('aria-pressed', p===el)); return; }
   if(a==='home') return go(isBrand()&&!v?'home':'home');
   if(a==='nav') return go(v);
@@ -562,6 +572,7 @@ document.addEventListener('submit', e=>{
     const email=$('aEmail').value.trim(), password=$('aPass').value;
     if(!/^\S+@\S+\.\S+$/.test(email) || password.length<8) return showErr('aErr','Enter a valid email and a password of at least 8 characters.');
     if(S.authMode==='up' && !$('aTerms').checked) return showErr('aErr','Please agree to the Boli terms to continue.');
+    if(S.authMode==='up' && S.authConfirm!==email){ S.authConfirm=email; $('aErr').hidden=true; $('aConfEmail').textContent=email; $('aConfirm').hidden=false; $('aBtn').textContent='Yes, create this account'; return; }
     $('aBtn').disabled = true;
     const r = S.authMode==='up' ? await sb.auth.signUp({email,password}) : await sb.auth.signInWithPassword({email,password});
     $('aBtn').disabled = false;
@@ -609,7 +620,7 @@ document.addEventListener('submit', e=>{
     const title=$('fAsk').value.trim(); if(title.length<3) { $('fErr').hidden=false; return; }
     const nb = {brand_id:S.user.id, brand_name:S.me.name, title, cat:$('fCat').value, city:$('fCity').value, min_followers:+$('fMin').value, creators_needed:Math.max(1,+$('fNum').value||1)};
     if(S.tpl==='simple' || S.tpl==='product' || S.tpl==='both'){
-      nb.type=$('fType').value; nb.comp = S.tpl==='simple' ? 'pay' : S.tpl; nb.pay = S.tpl==='product' ? 0 : Math.max(100,+$('fPay').value||0);
+      nb.type=S.ft; nb.comp = S.tpl==='simple' ? 'pay' : S.tpl; nb.pay = S.tpl==='product' ? 0 : Math.max(100,+$('fPay').value||0);
       if(S.tpl!=='simple'){ const pn=$('fProd').value.trim(); if(!pn) return showErr('fErr','Say which product you will send.'); nb.product_note=pn; nb.product_value=Math.max(0,+$('fProdV').value||0); }
     }
     else {
