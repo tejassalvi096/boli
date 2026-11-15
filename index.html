@@ -201,19 +201,20 @@ a.pill{text-decoration:none;color:inherit;display:inline-block}
 <script>
 const sb = supabase.createClient('https://logstpicpmemtbjuxfvk.supabase.co', 'sb_publishable_HLOMvlYAc6bz--50_Rj6dw_hho3p8vP');
 const CATS = {food:'Food', home:'Home', fashion:'Fashion', beauty:'Beauty', travel:'Travel', tech:'Apps & tech'};
-const TYPES = {collab:'Collaboration', content:'Content only', affiliate:'Affiliate'};
-const DEALS = {collab:'Collaboration', content:'Content only', affiliate:'Affiliate'};
+const TYPES = {content:'UGC video', collab:'Dedicated post', integration:'Integration', affiliate:'Affiliate'};
+const DEALS = TYPES;
+const TYPE_D = {content:'you make the video and the brand posts it on its own page', collab:'you post a video about the brand on your own page', integration:'you feature the product inside one of your regular videos, on your own page', affiliate:'you post with your own code and earn on each sale'};
 const CITIES = ['Mumbai','Thane','Pune','Nashik','Nagpur','Kolhapur','Chhatrapati Sambhajinagar','Solapur','Satara','Sangli','Ratnagiri','Sindhudurg','Raigad','Ahilyanagar','Jalgaon','Amravati','Other'];
 const LANGS = ['Marathi','Hindi','English'];
 const STD = ['Show the product clearly in the first 3 seconds.','Shoot it your own way, in your own language.','Say what you honestly thought of it.'];
 const STEPS = ['Applied','Accepted','Video sent','Approved','Paid'];
 const STEP_AT = {applied:1, accepted:2, sent:3, approved:4, paid:5};
-const TPL = {simple:'Fixed fee', affiliate:'Commission', full:'Full programme'};
-const TPLD = {simple:'Pay a set amount for each approved video.', affiliate:'Pay a share of every sale a creator brings through their code.', full:'Commission with levels, a retainer for top sellers and a bonus challenge.'};
-const DEF = {type:'', city:'', sort:'new', mine:false, ccat:'', ccity:'', clang:'', cfol:'0', csort:'fol'};
+const TPL = {simple:'Payment', product:'Product only', both:'Product + payment', affiliate:'Commission', full:'Full programme'};
+const TPLD = {simple:'Pay a set amount for each approved video.', product:'Send your product. The creator keeps it and there is no payment.', both:'Send your product and also pay for each approved video.', affiliate:'Pay a share of every sale a creator brings through their code.', full:'Commission with levels, a retainer for top sellers and a bonus challenge.'};
+const DEF = {type:'', comp:'', city:'', sort:'new', mine:false, ccat:'', ccity:'', clang:'', cfol:'0', csort:'fol'};
 const FEE = {payg:10, sub:5, subPrice:2999};
 const PCOLS = 'id,role,name,city,langs,cats,deals,followers,rate,site,created_at,plan,plan_requested_at';
-const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', stats:{}, bstats:{}};
+const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -225,7 +226,9 @@ const same = (a,b) => String(a)===String(b);
 const daysLeft = b => Math.max(0, Math.ceil((new Date(b.closes_on+'T23:59:59') - Date.now())/864e5));
 const left = d => d<=0 ? 'Closes today' : d===1 ? 'Closes tomorrow' : d+' days left';
 const need = b => b.min_followers ? num(b.min_followers)+'+ followers' : 'Any follower count';
-const payLabel = b => b.type==='affiliate' ? b.comm+'% a sale' : rs(b.pay);
+const payLabel = b => b.type==='affiliate' ? b.comm+'% a sale' : b.comp==='product' ? 'Free product' : b.comp==='both' ? rs(b.pay)+' + product' : rs(b.pay);
+const hasProduct = b => !!b && (b.comp==='product' || b.comp==='both');
+const lastStep = b => b && b.comp==='product' ? 'Completed' : 'Paid';
 const isCreator = () => S.me && S.me.role==='creator';
 const isBrand = () => S.me && S.me.role==='brand';
 const ok = b => !isCreator() || S.me.followers >= b.min_followers;
@@ -243,6 +246,7 @@ async function loadAll(){
   S.me = await q(sb.from('profiles').select(PCOLS).eq('id',S.user.id).maybeSingle());
   if(!S.me) return;
   (await q(sb.rpc('creator_stats'))).forEach(r=>{ S.stats[r.creator_id]=r; });
+  S.del = {}; (await q(sb.from('deliveries').select('*'))).forEach(d=>{ S.del[d.application_id]=d; });
   if(isCreator()){
     const l = (await q(sb.rpc('my_links')))[0] || {}; S.me.social = l.social; S.me.sample_link = l.sample_link;
     S.apps = await q(sb.from('applications').select('*, briefs(*)').eq('creator_id',S.user.id).order('created_at',{ascending:false}));
@@ -265,13 +269,14 @@ const cover = (b, tag) => `<${tag||'button'} class="cover t-${hue(b.cat)}" ${tag
 const card = b => { const a = myApp(b.id); return `<article class="bc">${cover(b)}
   <button class="bc-t" data-act="brief" data-v="${b.id}">${esc(b.title)}</button>
   <div class="row"><span class="meta">${esc(b.city)} · ${need(b)}</span>${a?`<span class="tag">${STEPS[STEP_AT[a.status]-1]||'Not selected'}</span>`:''}</div></article>`; };
-const track = s => `<div class="track" style="grid-template-columns:repeat(5,1fr)">${STEPS.map((x,k)=>`<span class="${k<(STEP_AT[s]||0)?'on':''}">${x}</span>`).join('')}</div>`;
+const track = (s, b) => `<div class="track" style="grid-template-columns:repeat(5,1fr)">${STEPS.map((x,k)=>`<span class="${k<(STEP_AT[s]||0)?'on':''}">${k===4?lastStep(b):x}</span>`).join('')}</div>`;
 const chipsPick = (g, opts, on) => `<div class="chips" style="flex-wrap:wrap;overflow:visible" data-g="${g}">${opts.map(([k,t])=>`<button type="button" class="pill" data-act="pick" data-k="${esc(k)}" aria-pressed="${(on||[]).includes(k)}">${esc(t)}</button>`).join('')}</div>`;
 const picked = g => [...document.querySelectorAll(`[data-g="${g}"] [aria-pressed="true"]`)].map(e=>e.dataset.k);
 const opts = (list, cur) => list.map(([v,t])=>`<option value="${esc(v)}"${same(v,cur)?' selected':''}>${esc(t)}</option>`).join('');
 
 function fdef(k){
   if(k==='b') return [['type','Deal',[['','All'],...Object.entries(TYPES)]],
+    ['comp','What you get',[['','Anything'],['paid','Paid deals'],['product','Product only']]],
     ['city','Location',[['','Anywhere'],...[...new Set(S.briefs.map(b=>b.city).filter(c=>c!=='All Maharashtra'))].map(c=>[c,c])]],
     ...(isCreator()?[['mine','Eligibility',[[false,'All briefs'],[true,'Only ones I qualify for']]]]:[]),
     ['sort','Sort by',[['new','Newest'],['soon','Closing soon'],['pay','Highest pay']]]];
@@ -291,7 +296,7 @@ function fbar(k){
 /* ---------- views ---------- */
 function gridHTML(){
   const s = S.q.trim().toLowerCase(), F = S.flt;
-  const list = S.briefs.filter(b => (!S.cat || b.cat===S.cat) && (!F.type || b.type===F.type) && (!F.city || b.city===F.city || b.city==='All Maharashtra') && (!F.mine || ok(b)) && (!s || (b.title+' '+b.brand_name+' '+b.city+' '+(CATS[b.cat]||'')).toLowerCase().includes(s)));
+  const list = S.briefs.filter(b => (!S.cat || b.cat===S.cat) && (!F.type || b.type===F.type) && (!F.comp || (F.comp==='product' ? b.comp==='product' : b.comp!=='product')) && (!F.city || b.city===F.city || b.city==='All Maharashtra') && (!F.mine || ok(b)) && (!s || (b.title+' '+b.brand_name+' '+b.city+' '+(CATS[b.cat]||'')).toLowerCase().includes(s)));
   if(F.sort==='pay') list.sort((a,b)=>b.pay-a.pay); else if(F.sort==='soon') list.sort((a,b)=>daysLeft(a)-daysLeft(b));
   if(!S.briefs.length) return `<div class="panel" style="grid-column:1/-1"><h3>No open briefs yet</h3><p class="meta">Brands are just joining. ${S.user?'Check back soon.':'Create your profile now so they can find you.'}</p></div>`;
   return list.length ? `<p class="meta" style="grid-column:1/-1">${list.length} brief${list.length>1?'s':''} found</p>`+list.map(card).join('') : '<p class="meta" style="grid-column:1/-1">No briefs match. Try removing a filter.</p>';
@@ -309,10 +314,10 @@ function vHome(){
     </div>
     ${fan.length?`<div class="fan">${fan.map(b=>cover(b,'div')).join('')}</div>`:''}
   </section>
-  <ul class="facts"><li>Fixed fee, collaboration or commission on sales</li><li>Brands set the follower range they want</li><li>Creators of every size can join</li></ul>
+  <ul class="facts"><li>UGC videos, dedicated posts, integrations or commission deals</li><li>Brands set the follower range they want</li><li>Creators of every size can join</li></ul>
   <section class="sec"><h2>How it works</h2><div class="split">
     <div class="panel"><span class="eyebrow">If you are a creator</span><ol class="steps"><li>Create your account.</li><li>Add your city, languages and what you make.</li><li>Browse brands and apply to the briefs you like.</li><li>Once a brand accepts you, shoot and send your video.</li><li>The brand approves it and pays you.</li></ol><div><button class="btn accent" data-act="join" data-v="creator">Start as a creator</button></div></div>
-    <div class="panel"><span class="eyebrow">If you are a brand</span><ol class="steps"><li>Create your brand account.</li><li>Choose how you pay: fixed fee, commission or a full programme.</li><li>Post a brief with the follower range you want.</li><li>Review applicants, or browse creators yourself.</li><li>Approve the videos you like and pay the creator.</li></ol><div><button class="btn" data-act="join" data-v="brand">Start as a brand</button></div></div>
+    <div class="panel"><span class="eyebrow">If you are a brand</span><ol class="steps"><li>Create your brand account.</li><li>Choose what you want, and what the creator gets: payment, product or commission.</li><li>Post a brief with the follower range you want.</li><li>Review applicants, or browse creators yourself.</li><li>Approve the videos you like and pay the creator.</li></ol><div><button class="btn" data-act="join" data-v="brand">Start as a brand</button></div></div>
   </div></section>`}
   <section class="sec" id="briefs">
     <div class="row" style="flex-wrap:wrap"><h2>Brands looking for creators</h2><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Search by product, brand or city" aria-label="Search briefs"></div>
@@ -380,11 +385,11 @@ function vBrief(){
   else if(isBrand()) action = b.brand_id===S.user.id ? `<button class="btn wide" data-act="nav" data-v="dash">Manage this brief</button>` : `<p class="meta">You are signed in as a brand. Only creators can apply to briefs.</p>`;
   else if(!s) action = ok(b) ? `<button class="btn accent wide" data-act="apply" data-v="${b.id}">${aff?'Ask to join this programme':'Apply for this brief'}</button>` : `<button class="btn wide" disabled>Needs ${need(b)}. You have ${num(S.me.followers)}.</button>`;
   else if(s==='declined') action = `<p class="meta">The brand chose other creators for this brief.</p>`;
-  else action = track(s) + (s==='applied' ? `<p class="meta">Sent. You will see it here when the brand responds.</p>`
-    : s==='accepted' ? `<form id="vidForm" class="sec" novalidate><label for="vLink">Link to your finished video<input id="vLink" placeholder="https://" value="${esc(a.video_link)}"></label><p class="meta">Upload it to Google Drive, YouTube (unlisted) or Instagram and paste the link.</p><button class="btn accent wide" type="submit">Send video to the brand</button></form>`
+  else action = track(s, b) + (s==='applied' ? `<p class="meta">Sent. You will see it here when the brand responds.</p>`
+    : s==='accepted' ? (hasProduct(b) ? delivery(a) : '') + `<form id="vidForm" class="sec" novalidate><label for="vLink">Link to your finished video<input id="vLink" placeholder="https://" value="${esc(a.video_link)}"></label><p class="meta">Upload it to Google Drive, YouTube (unlisted) or Instagram and paste the link.</p><button class="btn accent wide" type="submit">Send video to the brand</button></form>`
     : s==='sent' ? `<p class="meta">The brand is reviewing your video.</p>`
-    : s==='approved' ? `<p class="meta">Approved. Agree payment details with the brand in messages.</p>`
-    : `<p><span class="tag ok">Paid</span> The brand has marked this as paid.</p>`)
+    : s==='approved' ? `<p class="meta">${b.comp==='product'?'Approved. Nothing more to do; the brand will mark the deal as completed.':'Approved. Agree payment details with the brand in messages.'}</p>`
+    : `<p><span class="tag ok">${lastStep(b)}</span> ${b.comp==='product'?'The brand has marked this deal as completed.':'The brand has marked this as paid.'}</p>`)
     + `<button class="btn ghost wide" data-act="thread" data-v="${a.id}">Messages with ${esc(b.brand_name)}</button>`;
   const extra = (Array.isArray(L)&&L.length?`<h3>Levels</h3>${L.map(l=>`<div class="lv"><span><b>${esc(l.n)}</b><br><span class="meta">${l.at?'From '+rs(l.at)+' in sales':'Where everyone starts'}</span></span><span style="text-align:right"><b>${Number(l.c)}%</b><br><span class="meta">${l.r?'plus '+rs(l.r)+' a month':'commission only'}</span></span></div>`).join('')}${b.min_videos?`<p class="meta">Post at least ${b.min_videos} videos a month to keep a paid level.</p>`:''}`:'')
     + (b.challenge?`<div class="panel"><span class="eyebrow">Challenge</span><h3>${esc(b.challenge.t)}</h3><p class="meta">Bonus of ${rs(b.challenge.bonus)} on top of your commission.</p></div>`:'')
@@ -396,8 +401,9 @@ function vBrief(){
       <span class="eyebrow">${esc(b.brand_name)} · ${CATS[b.cat]||''}</span>
       <h1 style="font-size:clamp(1.8rem,4.6vw,2.6rem)">${esc(b.title)}</h1>
       <div class="panel">
-        <div class="kv"><span>You earn</span><b>${aff?b.comm+'% of every sale':rs(b.pay)}</b></div>
-        <div class="kv"><span>Deal</span><span>${TYPES[b.type]}: ${b.type==='collab'?'you post it on your own page':aff?'you post with your own code and earn on each sale':'the brand posts it, you do not have to'}</span></div>
+        <div class="kv"><span>You get</span><b>${aff?b.comm+'% of every sale':b.comp==='product'?'Free product':b.comp==='both'?rs(b.pay)+' + product':rs(b.pay)}</b></div>
+        ${hasProduct(b)?`<div class="kv"><span>Product</span><span>${esc(b.product_note||'')}${b.product_value?' (worth '+rs(b.product_value)+')':''}</span></div>`:''}
+        <div class="kv"><span>Deal</span><span>${TYPES[b.type]}: ${TYPE_D[b.type]}</span></div>
         <div class="kv"><span>Followers needed</span><span>${need(b)}</span></div>
         <div class="kv"><span>Where</span><span>${esc(b.city)}</span></div>
         ${S.bstats[b.brand_id]?`<div class="kv"><span>Brand’s record</span><span>Has paid ${S.bstats[b.brand_id]} creator${S.bstats[b.brand_id]>1?'s':''} on Boli</span></div>`:''}
@@ -407,45 +413,54 @@ function vBrief(){
       ${extra}
       <h3>What to shoot</h3>
       <ol class="steps">${STD.map(x=>`<li>${x}</li>`).join('')}</ol>
-      <p class="meta">${aff?'The brand gives you your code in messages once you are accepted, and pays your commission directly.':'For now the brand pays you directly once it approves your video. Agree the details in messages.'}${b.type!=='content'?' Your post must carry the paid partnership label.':''}</p>
+      <p class="meta">${aff?'The brand gives you your code in messages once you are accepted, and pays your commission directly.':b.comp==='product'?'This is a product-only deal: you keep the product and there is no payment.':'For now the brand pays you directly once it approves your video. Agree the details in messages.'}${b.type!=='content'?' Your post must carry the paid partnership label.':''}</p>
     </div>
   </div>`; }
 
+function delivery(a){
+  const d = S.del[a.id];
+  return d ? `<p class="meta">The product will be sent to ${esc(d.recipient)}, ${esc(d.address)}.</p>`
+    : `<form id="delForm" class="sec" novalidate><b>Where should the brand send the product?</b><label for="dName">Name<input id="dName" maxlength="80" value="${esc(S.me.name)}"></label><label for="dAddr">Full address with PIN code<textarea id="dAddr" rows="3" maxlength="400"></textarea></label><label for="dPhone">Phone number for the courier<input id="dPhone" inputmode="tel" maxlength="20"></label><p class="meta">Shared only with this brand, for this delivery.</p><button class="btn wide" type="submit">Save delivery details</button></form>`;
+}
+
 function vWork(){
   return `<div class="sec"><span class="eyebrow">My work</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Your applications</h1>
-    ${S.apps.map(a=>`<div class="panel"><div class="row"><button class="bc-t" data-act="brief" data-v="${a.brief_id}">${esc(a.briefs.brand_name)}</button><b>${payLabel(a.briefs)}</b></div><p class="meta">${esc(a.briefs.title)}</p>${a.status==='declined'?'<span class="meta">Not selected for this brief.</span>':track(a.status)}<div class="cta"><button class="pill" data-act="brief" data-v="${a.brief_id}">Open brief</button><button class="pill" data-act="thread" data-v="${a.id}">Messages</button></div></div>`).join('') || `<div class="panel"><p class="meta">Briefs you apply for appear here, with each step tracked until you are paid.</p><div><button class="btn accent" data-act="home">Browse briefs</button></div></div>`}
+    ${S.apps.map(a=>`<div class="panel"><div class="row"><button class="bc-t" data-act="brief" data-v="${a.brief_id}">${esc(a.briefs.brand_name)}</button><b>${payLabel(a.briefs)}</b></div><p class="meta">${esc(a.briefs.title)}</p>${a.status==='declined'?'<span class="meta">Not selected for this brief.</span>':track(a.status, a.briefs)}<div class="cta"><button class="pill" data-act="brief" data-v="${a.brief_id}">Open brief</button><button class="pill" data-act="thread" data-v="${a.id}">Messages</button></div></div>`).join('') || `<div class="panel"><p class="meta">Briefs you apply for appear here, with each step tracked until you are paid.</p><div><button class="btn accent" data-act="home">Browse briefs</button></div></div>`}
   </div>`; }
 
-function appRow(a){
+function appRow(a, b){
   const c = a.profiles || {}, s = a.status, v = url(a.video_link), L = a.links || {}, soc = url(L.social), sm = url(L.sample_link);
-  const lab = {applied:'Applied', accepted:'Accepted, now shooting', declined:'Declined', sent:'Video received', approved:'Approved, payment due', paid:'Paid'}[s];
+  const lab = {applied:'Applied', accepted:'Accepted, now shooting', declined:'Declined', sent:'Video received', approved:lastStep(b)==='Completed'?'Approved':'Approved, payment due', paid:lastStep(b)}[s];
   const btn = (st, t, on) => `<button class="pill" data-act="status" data-v="${a.id}" data-s="${st}"${on?' aria-pressed="true"':''}>${t}</button>`;
-  const acts = s==='applied' ? btn('accepted','Accept',1)+btn('declined','Decline') : s==='sent' ? btn('approved','Approve video',1)+btn('accepted','Ask for changes') : s==='approved' ? btn('paid','Mark as paid',1) : '';
+  const acts = s==='applied' ? btn('accepted','Accept',1)+btn('declined','Decline') : s==='sent' ? btn('approved','Approve video',1)+btn('accepted','Ask for changes') : s==='approved' ? btn('paid', lastStep(b)==='Completed'?'Mark as completed':'Mark as paid', 1) : '';
   return `<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b><br><span class="meta">${esc(c.city||'')} · ${num(c.followers)} followers · ${rec(c.id)} · ${lab}</span></div>
-    ${sm?`<a class="pill" href="${esc(sm)}" target="_blank" rel="noopener">Sample video</a>`:''}${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${v&&s!=='applied'?`<a class="pill" href="${esc(v)}" target="_blank" rel="noopener">Watch video</a>`:''}${acts}<button class="pill" data-act="thread" data-v="${a.id}">Messages</button></div>`; }
+    ${sm?`<a class="pill" href="${esc(sm)}" target="_blank" rel="noopener">Sample video</a>`:''}${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${v&&s!=='applied'?`<a class="pill" href="${esc(v)}" target="_blank" rel="noopener">Watch video</a>`:''}${acts}<button class="pill" data-act="thread" data-v="${a.id}">Messages</button>${hasProduct(b)&&['accepted','sent','approved','paid'].includes(s)?`<p class="meta" style="flex-basis:100%">${S.del[a.id]?'Send the product to: '+esc(S.del[a.id].recipient)+', '+esc(S.del[a.id].address)+', phone '+esc(S.del[a.id].phone):'Waiting for the creator’s delivery details.'}</p>`:''}</div>`; }
 
 function vDash(){
-  const t = S.tpl;
+  const t = S.tpl, comm = t==='affiliate' || t==='full';
   return `<div class="split">
   <div class="sec"><span class="eyebrow">${esc(S.me.name)}</span><h1 style="font-size:clamp(1.8rem,5vw,2.6rem)">Post a brief</h1>
   <form id="briefForm" class="panel" novalidate>
-    <b>How do you want to pay creators?</b>
-    <div class="chips">${Object.entries(TPL).map(([k,v])=>`<button type="button" class="pill" data-act="tpl" data-v="${k}" aria-pressed="${t===k}">${v}</button>`).join('')}</div>
+    <b>What does the creator get?</b>
+    <div class="chips" style="flex-wrap:wrap;overflow:visible">${Object.entries(TPL).map(([k,v])=>`<button type="button" class="pill" data-act="tpl" data-v="${k}" aria-pressed="${t===k}">${v}</button>`).join('')}</div>
     <p class="meta">${TPLD[t]}</p>
+    ${comm?'':`<label for="fType">What you want<select id="fType">${opts([['content','UGC video'],['collab','Dedicated post'],['integration','Integration']], S.ft)}</select></label>
+    <p class="meta">UGC video: you receive the video and post it yourself. Dedicated post: the creator posts a video about you on their page. Integration: your product features inside one of the creator’s regular videos.</p>`}
     <label for="fAsk">What should the video show?<textarea id="fAsk" rows="3" maxlength="200" placeholder="e.g. A home cook making misal with our masala">${esc(S.fa)}</textarea></label>
     <div class="two">
       <label for="fCat">Category<select id="fCat">${opts(Object.entries(CATS), (S.me.cats||[])[0]||'food')}</select></label>
       <label for="fCity">Where<select id="fCity">${opts([['All Maharashtra','All Maharashtra'],...CITIES.filter(c=>c!=='Other').map(c=>[c,c])],'All Maharashtra')}</select></label>
     </div>
+    ${t==='product'||t==='both'?`<div class="two"><label for="fProd">Product you will send<input id="fProd" maxlength="80" placeholder="e.g. 250 g goda masala"></label><label for="fProdV">Product value (₹)<input id="fProdV" type="number" min="0" step="50" value="500"></label></div>`:''}
     <div class="two">
-      ${t==='simple'?`<label for="fPay">Pay per video (₹)<input id="fPay" type="number" min="100" step="100" value="1500"></label>`:`<label for="fComm">Commission per sale (%)<input id="fComm" type="number" min="1" max="50" value="10"></label>`}
+      ${comm?`<label for="fComm">Commission per sale (%)<input id="fComm" type="number" min="1" max="50" value="10"></label>`:t==='product'?'':`<label for="fPay">Pay per video (₹)<input id="fPay" type="number" min="100" step="100" value="1500"></label>`}
       <label for="fNum">Creators needed<input id="fNum" type="number" min="1" max="500" value="10"></label>
     </div>
     <div class="two">
-      ${t==='simple'?`<label for="fType">What you want<select id="fType"><option value="collab">Collaboration</option><option value="content">Content only</option></select></label>`:`<label for="fVid">Minimum videos a month<input id="fVid" type="number" min="0" max="30" value="4"></label>`}
+      ${comm?`<label for="fVid">Minimum videos a month<input id="fVid" type="number" min="0" max="30" value="4"></label>`:''}
       <label for="fMin">Minimum followers<select id="fMin"><option value="0">No minimum</option><option value="1000">1,000+</option><option value="5000">5,000+</option><option value="10000">10,000+</option><option value="50000">50,000+</option></select></label>
     </div>
-    ${t==='simple'?`<p class="meta">Collaboration: the creator posts on their own page. Content only: you receive the video and post it yourself.</p>`:`<label for="fHooks">Hooks that work, one per line (optional)<textarea id="fHooks" rows="3" placeholder="e.g. One spoon. That is the whole recipe."></textarea></label>`}
+    ${comm?`<label for="fHooks">Hooks that work, one per line (optional)<textarea id="fHooks" rows="3" placeholder="e.g. One spoon. That is the whole recipe."></textarea></label>`:''}
     ${t==='full'?`<div class="two"><label for="fUp">Sales to reach next level (₹)<input id="fUp" type="number" min="500" step="500" value="2500"></label><label for="fRet">Top-level monthly retainer (₹)<input id="fRet" type="number" min="0" step="500" value="3000"></label></div>
     <div class="two"><label for="fChT">Challenge sales target (₹)<input id="fChT" type="number" min="0" step="500" value="5000"></label><label for="fChB">Challenge bonus (₹)<input id="fChB" type="number" min="0" step="100" value="1000"></label></div>`:''}
     <p class="meta" id="fErr" hidden>Describe what the video should show.</p>
@@ -453,7 +468,7 @@ function vDash(){
     <p class="meta">Free while in-app payments are being set up. After that, Boli adds a ${FEE.payg}% fee on each deal, or ${FEE.sub}% on the subscription plan.</p>
   </form></div>
   <div class="sec"><h2>Your briefs</h2>
-  ${S.mine.map(b=>{ const apps=b.applications||[]; return `<div class="panel"><div class="row"><b>${esc(b.title)}</b><b>${payLabel(b)}</b></div><div class="row"><span class="meta">${b.status==='open'?left(daysLeft(b))+' · ':''}${apps.length} applicant${apps.length===1?'':'s'}</span>${b.status==='open'?`<button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`:'<span class="tag">Closed</span>'}</div>${apps.map(appRow).join('')}</div>`; }).join('') || '<p class="meta">Briefs you post appear here with everyone who applies.</p>'}
+  ${S.mine.map(b=>{ const apps=b.applications||[]; return `<div class="panel"><div class="row"><b>${esc(b.title)}</b><b>${payLabel(b)}</b></div><div class="row"><span class="meta">${b.status==='open'?left(daysLeft(b))+' · ':''}${apps.length} applicant${apps.length===1?'':'s'}</span>${b.status==='open'?`<button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`:'<span class="tag">Closed</span>'}</div>${apps.map(a=>appRow(a,b)).join('')}</div>`; }).join('') || '<p class="meta">Briefs you post appear here with everyone who applies.</p>'}
   </div></div>`; }
 
 function clist(){
@@ -498,7 +513,7 @@ function nav(){
   $('acct').hidden = !!S.user;
 }
 function render(){
-  const fa=$('fAsk'); if(fa) S.fa=fa.value;
+  const fa=$('fAsk'); if(fa) S.fa=fa.value; const ft=$('fType'); if(ft) S.ft=ft.value;
   if(S.user && !S.me && S.view!=='profile') S.view='profile';
   const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, thread:vThread};
   const need_me = ['work','dash','find','account','thread'];
@@ -580,6 +595,11 @@ document.addEventListener('submit', e=>{
     const link=$('vLink').value.trim(); if(!url(link)) return toast('Paste a link that starts with https://');
     await q(sb.from('applications').update({status:'sent', video_link:link}).eq('id', myApp(S.arg).id)); await loadAll(); render(); toast('Video sent to the brand');
   });
+  if(id==='delForm') return run(async()=>{
+    const recipient=$('dName').value.trim(), address=$('dAddr').value.trim(), phone=$('dPhone').value.trim();
+    if(!recipient || address.length<5 || phone.length<6) return toast('Add your name, full address and a phone number.');
+    await q(sb.from('deliveries').insert({application_id:myApp(S.arg).id, creator_id:S.user.id, recipient, address, phone})); await loadAll(); render(); toast('Delivery details sent to the brand');
+  });
   if(id==='msgForm') return run(async()=>{
     const body=$('mBody').value.trim(); if(!body) return;
     await q(sb.from('messages').insert({application_id:S.arg, sender_id:S.user.id, body}));
@@ -588,7 +608,10 @@ document.addEventListener('submit', e=>{
   if(id==='briefForm') return run(async()=>{
     const title=$('fAsk').value.trim(); if(title.length<3) { $('fErr').hidden=false; return; }
     const nb = {brand_id:S.user.id, brand_name:S.me.name, title, cat:$('fCat').value, city:$('fCity').value, min_followers:+$('fMin').value, creators_needed:Math.max(1,+$('fNum').value||1)};
-    if(S.tpl==='simple'){ nb.type=$('fType').value; nb.pay=Math.max(100,+$('fPay').value||0); }
+    if(S.tpl==='simple' || S.tpl==='product' || S.tpl==='both'){
+      nb.type=$('fType').value; nb.comp = S.tpl==='simple' ? 'pay' : S.tpl; nb.pay = S.tpl==='product' ? 0 : Math.max(100,+$('fPay').value||0);
+      if(S.tpl!=='simple'){ const pn=$('fProd').value.trim(); if(!pn) return showErr('fErr','Say which product you will send.'); nb.product_note=pn; nb.product_value=Math.max(0,+$('fProdV').value||0); }
+    }
     else {
       nb.type='affiliate'; nb.pay=0; nb.comm=Math.min(50,Math.max(1,+$('fComm').value||10)); nb.min_videos=Math.max(0,+$('fVid').value||0);
       nb.hooks=$('fHooks').value.split('\n').map(x=>x.trim()).filter(Boolean).slice(0,8);
