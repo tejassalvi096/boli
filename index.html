@@ -183,24 +183,18 @@ body.busy #view [data-act],body.busy #view button[type=submit]{pointer-events:no
 body.busy::before{content:'';position:fixed;top:0;left:0;height:3px;width:40%;background:var(--accent);z-index:999;animation:boliBar 1s ease-in-out infinite}
 @keyframes boliBar{0%{left:-40%}100%{left:100%}}
 @media (prefers-reduced-motion:reduce){body.busy::before{animation:none;width:100%}}
+#langs[hidden],#pCityOtherWrap[hidden]{display:none}
 </style>
 </head>
 <body>
 <header><div class="in">
   <div class="hd">
     <button class="logo" data-act="home" aria-label="Boli home">boli<i>.</i></button>
-    <button class="lang" id="locBtn" data-act="langs" aria-expanded="false">Marathi ▾</button>
+    <button class="lang" id="locBtn" data-act="langs" aria-expanded="false" aria-label="Filter by language">All languages ▾</button>
     <nav class="dnav" id="dnav" aria-label="Sections"></nav>
     <div class="seg" id="acct"></div>
   </div>
-  <div class="langs" id="langs" hidden>
-    <button class="pill" aria-pressed="true">Marathi</button>
-    <button class="pill" disabled>Hindi · soon</button>
-    <button class="pill" disabled>Gujarati · soon</button>
-    <button class="pill" disabled>Kannada · soon</button>
-    <button class="pill" disabled>Bengali · soon</button>
-    <button class="pill" disabled>Tamil · soon</button>
-  </div>
+  <div class="langs" id="langs" hidden></div>
 </div></header>
 
 <div class="in"><main id="view"><p class="meta">Loading…</p></main></div>
@@ -223,6 +217,10 @@ const DEAL_TYPES = Object.entries(TYPES).filter(([k])=>COMM_ON || k!=='affiliate
 const TYPE_D = {content:'you make the video and the brand posts it on its own page', collab:'you post a video about the brand on your own page', integration:'you feature the product inside one of your regular videos, on your own page', affiliate:'you post with your own code and earn on each sale'};
 const CITIES = ['Mumbai','Thane','Pune','Nashik','Nagpur','Kolhapur','Chhatrapati Sambhajinagar','Solapur','Satara','Sangli','Ratnagiri','Sindhudurg','Raigad','Ahilyanagar','Jalgaon','Amravati','Other'];
 const LANGS = ['Marathi','Hindi','English'];
+const BLANGS = ['Any','Marathi','Hindi','English'];
+const VLEN = {any:'Any length', '30':'Up to 30 seconds', '60':'30 to 60 seconds', '90':'60 to 90 seconds'};
+const DUES = [3,5,7,10,14];
+const WIDE = ['All Maharashtra','Anywhere in India'];
 const STD = ['Show the product clearly in the first 3 seconds.','Shoot it your own way, in your own language.','Say what you honestly thought of it.'];
 const STEPS = ['Applied','Accepted','Video sent','Approved','Paid'];
 const STEP_AT = {applied:1, accepted:2, sent:3, approved:4, paid:5};
@@ -232,11 +230,14 @@ const DEF = {type:'', comp:'', city:'', sort:'new', mine:false, ccat:'', ccity:'
 const FEE = {payg:10, sub:5, subPrice:2999};
 const PCOLS = 'id,role,name,city,langs,cats,deals,followers,rate,site,created_at,plan,plan_requested_at,is_admin,suspended,verified';
 /* Set this to a real support address to show a contact link in the footer and on the terms page. */
+const PX = PCOLS + ',bio,area,local_focus';
+/* PSEL is the profile column list in use: PX once the newer profile columns exist in the database, PCOLS until then. */
+let PSEL = PCOLS;
 const SUPPORT_EMAIL = '';
 const TERMS = ['Deals that start on Boli are agreed, delivered and paid through Boli.','Keep all conversation about a deal inside Boli messages. Phone numbers, emails, links and social handles are hidden in messages.','Give accurate details about yourself, your followers and your brand.','Creators own their videos until the brand pays for them. Paid posts carry the paid partnership label.','Boli may charge brands a service fee on each deal. The fee is always shown before a deal is confirmed.','The Boli team can read deal messages and may step in to help or to resolve a dispute.','Taking a deal that started on Boli off the platform can get your account suspended.','Accounts that break these terms can be suspended or removed.'];
-const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms','forgot','reset'];
+const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms','forgot','reset','creator','edit'];
 const ACTIVE = ['accepted','sent','approved','paid'];
-const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}, authNote:'', alerts:true, alertsOk:false, pwOpen:false, resendEmail:'', resendUntil:0, forgotSent:''};
+const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}, authNote:'', alerts:true, alertsOk:false, pwOpen:false, resendEmail:'', resendUntil:0, forgotSent:'', lang:'', invites:[], cap:{profiles:false, briefs:false, invites:false}};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -265,27 +266,43 @@ function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clea
 
 /* ---------- data ---------- */
 async function q(p){ const {data,error} = await p; if(error) throw new Error(error.message); return data; }
+/* Looks once at which newer database pieces exist, so the app works before and after a database update without a new deploy. */
+const capOk = (r, table) => { const e = r && r.error; if(!e) return true; const c = String(e.code||''), m = String(e.message||''); if(c==='42501') return true; return !(c==='42703' || c==='42P01' || c==='PGRST205' || c==='PGRST204' || c==='' || /does not exist|could not find|failed to fetch|network/i.test(m)); };
+async function probeCaps(){
+  const safe = p => p.then(r=>r, ()=>({error:{code:'', message:'failed to fetch'}}));
+  const [p, b, i] = await Promise.all([safe(sb.from('profiles').select('bio').limit(1)), safe(sb.from('briefs').select('lang').limit(1)), safe(sb.from('invites').select('id').limit(1))]);
+  S.cap = {profiles: capOk(p), briefs: capOk(b), invites: capOk(i)};
+  PSEL = S.cap.profiles ? PX : PCOLS;
+}
+const invitedTo = id => !!(isCreator() && (S.invites||[]).some(i=>i.brief_id===id));
+const fval = (id, max) => { const e = $(id); const v = e ? String(e.value||'').trim() : ''; return v ? v.slice(0, max||1500) : null; };
 let loadChain = Promise.resolve();
 function loadAll(){ const p = loadChain.catch(()=>{}).then(doLoad); loadChain = p; return p; }
 async function doLoad(){
+  try{ return await doLoad0(); }
+  catch(e){ if(PSEL!==PCOLS && /does not exist|42703/i.test(String(e && e.message))){ PSEL = PCOLS; S.cap.profiles = false; return await doLoad0(); } throw e; }
+}
+async function doLoad0(){
   const uid = S.user ? S.user.id : null;
   const [briefsR, bstatsR, meR] = await Promise.all([
     q(sb.from('briefs').select('*').eq('status','open').order('created_at',{ascending:false})),
     q(sb.rpc('brand_stats')),
-    uid ? q(sb.from('profiles').select(PCOLS).eq('id',uid).maybeSingle()) : null]);
-  const N = {briefs: briefsR.filter(b=>!expired(b)), bstats:{}, me: meR||null, apps:[], mine:[], creators:[], stats:{}, del:{}, alerts:true, alertsOk:false};
+    uid ? q(sb.from('profiles').select(PSEL).eq('id',uid).maybeSingle()) : null]);
+  const N = {briefs: briefsR.filter(b=>!expired(b)), bstats:{}, me: meR||null, apps:[], mine:[], creators:[], stats:{}, del:{}, alerts:true, alertsOk:false, invites:[]};
   bstatsR.forEach(r=>{ N.bstats[r.brand_id]=r.paid; });
   if(N.me){
     const creator = N.me.role==='creator';
-    const [al, cs, dl, x1, x2, x3] = await Promise.all([
+    const [al, cs, dl, iv, x1, x2, x3] = await Promise.all([
       sb.from('profiles').select('email_alerts').eq('id',uid).maybeSingle().then(r=>r, ()=>({error:true})),
       q(sb.rpc('creator_stats')),
       q(sb.from('deliveries').select('*')),
+      S.cap.invites ? sb.from('invites').select('*').then(r=>r.error ? [] : (r.data||[]), ()=>[]) : [],
       ...(creator ? [q(sb.rpc('my_links')), q(sb.from('applications').select('*, briefs(*)').eq('creator_id',uid).order('created_at',{ascending:false}))]
-        : [q(sb.from('briefs').select('*, applications(*, profiles('+PCOLS+'))').eq('brand_id',uid).order('created_at',{ascending:false})), q(sb.rpc('applicant_links')), q(sb.from('profiles').select(PCOLS).eq('role','creator').order('followers',{ascending:false}))])]);
+        : [q(sb.from('briefs').select('*, applications(*, profiles('+PSEL+'))').eq('brand_id',uid).order('created_at',{ascending:false})), q(sb.rpc('applicant_links')), q(sb.from('profiles').select(PSEL).eq('role','creator').order('followers',{ascending:false}))])]);
     if(al && !al.error && al.data){ N.alertsOk = true; N.alerts = al.data.email_alerts!==false; }
     cs.forEach(r=>{ N.stats[r.creator_id]=r; });
     dl.forEach(d=>{ N.del[d.application_id]=d; });
+    N.invites = Array.isArray(iv) ? iv : [];
     if(creator){ const l = x1[0] || {}; N.me.social = l.social; N.me.sample_link = l.sample_link; N.apps = x2; }
     else { const links = {}; x2.forEach(r=>{ links[r.application_id]=r; }); N.mine = x1; N.mine.forEach(b=>(b.applications||[]).forEach(a=>{ a.links = links[a.id]||{}; })); N.creators = x3; }
   }
@@ -302,7 +319,7 @@ const cover = (b, tag) => `<${tag||'button'} class="cover t-${hue(b.cat)}" ${tag
   <span class="glass">${TYPES[b.type]}</span><span class="cv"><b>${payLabel(b)}</b><span>${esc(b.brand_name)}</span></span></${tag||'button'}>`;
 const card = b => { const a = myApp(b.id); return `<article class="bc">${cover(b)}
   <button class="bc-t" data-act="brief" data-v="${b.id}">${esc(b.title)}</button>
-  <div class="row"><span class="meta">${esc(b.city)} · ${need(b)}</span>${a?`<span class="tag">${STEPS[STEP_AT[a.status]-1]||'Not selected'}</span>`:''}</div></article>`; };
+  <div class="row"><span class="meta">${esc(b.city)}${b.area?' · '+esc(b.area):''}${b.lang&&b.lang!=='Any'?' · '+esc(b.lang):''} · ${need(b)}</span>${a?`<span class="tag">${STEPS[STEP_AT[a.status]-1]||'Not selected'}</span>`:invitedTo(b.id)?'<span class="tag ok">Invited</span>':''}</div></article>`; };
 const track = (s, b) => `<div class="track" style="grid-template-columns:repeat(5,1fr)">${STEPS.map((x,k)=>`<span class="${k<(STEP_AT[s]||0)?'on':''}">${k===4?lastStep(b):x}</span>`).join('')}</div>`;
 const chipsPick = (g, opts, on) => `<div class="chips" style="flex-wrap:wrap;overflow:visible" data-g="${g}">${opts.map(([k,t])=>`<button type="button" class="pill" data-act="pick" data-k="${esc(k)}" aria-pressed="${(on||[]).includes(k)}">${esc(t)}</button>`).join('')}</div>`;
 const picked = g => [...document.querySelectorAll(`[data-g="${g}"] [aria-pressed="true"]`)].map(e=>e.dataset.k);
@@ -311,7 +328,7 @@ const opts = (list, cur) => list.map(([v,t])=>`<option value="${esc(v)}"${same(v
 function fdef(k){
   if(k==='b') return [['type','Deal',[['','All'],...DEAL_TYPES]],
     ['comp','What you get',[['','Anything'],['paid','Paid deals'],['product','Product only']]],
-    ['city','Location',[['','Anywhere'],...[...new Set(S.briefs.map(b=>b.city).filter(c=>c!=='All Maharashtra'))].map(c=>[c,c])]],
+    ['city','Location',[['','Anywhere'],...[...new Set(S.briefs.map(b=>b.city).filter(c=>!WIDE.includes(c)))].map(c=>[c,c])]],
     ...(isCreator()?[['mine','Eligibility',[[false,'All briefs'],[true,'Only ones I qualify for']]]]:[]),
     ['sort','Sort by',[['new','Newest'],['soon','Closing soon'],['pay','Highest pay']]]];
   return [['ccat','Category',[['','All'],...Object.entries(CATS)]],
@@ -330,10 +347,10 @@ function fbar(k){
 /* ---------- views ---------- */
 function gridHTML(){
   const s = S.q.trim().toLowerCase(), F = S.flt;
-  const list = S.briefs.filter(b => (!S.cat || b.cat===S.cat) && (!F.type || b.type===F.type) && (!F.comp || (F.comp==='product' ? b.comp==='product' : b.comp!=='product')) && (!F.city || b.city===F.city || b.city==='All Maharashtra') && (!F.mine || ok(b)) && (!s || (b.title+' '+b.brand_name+' '+b.city+' '+(CATS[b.cat]||'')).toLowerCase().includes(s)));
+  const list = S.briefs.filter(b => (!S.cat || b.cat===S.cat) && (!F.type || b.type===F.type) && (!F.comp || (F.comp==='product' ? b.comp==='product' : b.comp!=='product')) && (!F.city || b.city===F.city || WIDE.includes(b.city)) && (!S.lang || !b.lang || b.lang==='Any' || b.lang===S.lang) && (!F.mine || ok(b)) && (!s || (b.title+' '+b.brand_name+' '+b.city+' '+(b.area||'')+' '+(CATS[b.cat]||'')).toLowerCase().includes(s)));
   if(F.sort==='pay') list.sort((a,b)=>b.pay-a.pay); else if(F.sort==='soon') list.sort((a,b)=>daysLeft(a)-daysLeft(b));
   if(!S.briefs.length) return `<div class="panel" style="grid-column:1/-1"><h3>No open briefs yet</h3><p class="meta">Brands are just joining. ${S.user?'Check back soon.':'Create your profile now so they can find you.'}</p></div>`;
-  return list.length ? `<p class="meta" style="grid-column:1/-1">${list.length} brief${list.length>1?'s':''} found</p>`+list.map(card).join('') : '<p class="meta" style="grid-column:1/-1">No briefs match. Try removing a filter.</p>';
+  return list.length ? `<p class="meta" style="grid-column:1/-1">${list.length} brief${list.length>1?'s':''} found</p>`+list.map(card).join('') : `<p class="meta" style="grid-column:1/-1">No briefs match. ${S.lang?'Try All languages at the top, or remove a filter.':'Try removing a filter.'}</p>`;
 }
 
 function vHome(){
@@ -341,9 +358,9 @@ function vHome(){
   return `
   ${S.user?'':`<section class="hero">
     <div class="sec">
-      <span class="eyebrow">Now open in Marathi</span>
+      <span class="eyebrow">Now open in Marathi and Hindi</span>
       <h1>Where brands and creators find each other.</h1>
-      <p>Brands post what they need and choose who fits. Creators browse brands and apply. In regional languages, starting with Marathi.</p>
+      <p>Brands post what they need and choose who fits. Creators browse brands and apply. In regional languages, starting with Marathi and Hindi.</p>
       <div class="cta"><button class="btn accent" data-act="join" data-v="creator">I’m a creator</button><button class="btn ghost" data-act="join" data-v="brand">I’m a brand</button></div>
     </div>
     ${fan.length?`<div class="fan">${fan.map(b=>cover(b,'div')).join('')}</div>`:''}
@@ -354,7 +371,8 @@ function vHome(){
     <div class="panel"><span class="eyebrow">If you are a brand</span><ol class="steps"><li>Create your brand account.</li><li>Choose what you want, and what the creator gets: payment, product or both.</li><li>Post a brief with the follower range you want.</li><li>Review applicants, or browse creators yourself.</li><li>Approve the videos you like and pay the creator.</li></ol><div><button class="btn" data-act="join" data-v="brand">Start as a brand</button></div></div>
   </div></section>`}
   <section class="sec" id="briefs">
-    <div class="row" style="flex-wrap:wrap"><h2>Brands looking for creators</h2><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Search by product, brand or city" aria-label="Search briefs"></div>
+    ${invPanel()}
+    <div class="row" style="flex-wrap:wrap"><h2>Brands looking for creators</h2><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Search by product, brand or place" aria-label="Search briefs"></div>
     <div class="chips"><button class="pill" data-act="cat" data-v="" aria-pressed="${!S.cat}">All</button>${Object.entries(CATS).map(([k,v])=>`<button class="pill" data-act="cat" data-v="${k}" aria-pressed="${S.cat===k}">${v}</button>`).join('')}</div>
     ${fbar('b')}
     <div class="grid" id="grid">${gridHTML()}</div>
@@ -364,6 +382,12 @@ function vHome(){
   </section>
   ${footHTML()}`; }
 
+function invPanel(){
+  if(!isCreator()) return '';
+  const list = (S.invites||[]).map(i=>S.briefs.find(b=>b.id===i.brief_id)).filter(b=>b && !myApp(b.id));
+  if(!list.length) return '';
+  return `<div class="panel" id="invPanel"><b>You have ${list.length} invitation${list.length>1?'s':''}</b><p class="meta">These brands asked you to look at their brief.</p>${list.map(b=>`<div class="row" style="flex-wrap:wrap;gap:6px 12px"><span><b>${esc(b.brand_name)}</b><br><span class="meta">${esc(b.title)} · ${payLabel(b)}</span></span><button class="pill" data-act="brief" data-v="${b.id}">Open brief</button></div>`).join('')}</div>`;
+}
 function helpLine(){ return SUPPORT_EMAIL ? `Need help? Write to <a class="link" href="mailto:${esc(SUPPORT_EMAIL)}">${esc(SUPPORT_EMAIL)}</a>.` : 'Need help? Write to the Boli team from any deal’s messages.'; }
 function footHTML(){ return `<footer class="row" style="flex-wrap:wrap;gap:8px 16px;border-top:1px solid var(--line);padding-top:16px"><button class="link" data-act="nav" data-v="terms">Terms</button><span class="meta">${helpLine()}</span></footer>`; }
 function vTerms(){ return `<div class="sec" style="max-width:640px;margin:0 auto;width:100%"><button class="link" data-act="home">‹ Home</button>
@@ -394,20 +418,26 @@ function vAuth(){
 
 function vProfile(){
   const m = S.me || {}, role = m.role || (S.user.user_metadata||{}).role || S.authRole, isNew = !S.me;
+  const cityIn = CITIES.includes(m.city||'Mumbai');
   const head = `<h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${isNew?(role==='creator'?'Build your creator profile':'Set up your brand'):'Edit your profile'}</h1>`;
   const creator = `<p class="meta">This is what brands see when they look for creators.</p>
     <form id="profForm" class="panel" novalidate>
       <label for="pName">Full name<input id="pName" maxlength="80" value="${esc(m.name)}" placeholder="e.g. Meera Joshi"></label>
-      <label for="pCity">City or district<select id="pCity">${opts(CITIES.map(c=>[c,c]), m.city||'Mumbai')}</select></label>
+      <label for="pCity">City or district<select id="pCity">${opts(CITIES.map(c=>[c,c]), cityIn ? (m.city||'Mumbai') : 'Other')}</select></label>
+      <label for="pCityOther" id="pCityOtherWrap"${cityIn && m.city!=='Other' ? ' hidden' : ''}>Your city or town<input id="pCityOther" maxlength="60" value="${esc(cityIn ? '' : m.city)}" placeholder="e.g. Panchgani"></label>
+      ${S.cap.profiles?`<label for="pArea">Area or locality (optional)<input id="pArea" maxlength="60" value="${esc(m.area)}" placeholder="e.g. Andheri East"></label>
+      <label for="pLocal">Is your page about one place? (optional)<input id="pLocal" maxlength="60" value="${esc(m.local_focus)}" placeholder="e.g. Andheri, Panchgani"></label>
+      <p class="meta">For pages that cover one town, suburb or area. Brands looking for local reach can find you by it.</p>
+      <label for="pBio">Short bio (optional)<textarea id="pBio" rows="3" maxlength="300" placeholder="What you make and who watches it">${esc(m.bio)}</textarea></label>`:''}
       <b>Languages you create in</b>${chipsPick('lang', LANGS.map(l=>[l,l]), m.langs||['Marathi'])}
       <b>What you make</b>${chipsPick('cat', Object.entries(CATS), m.cats||[])}
       <b>Deals you are open to</b>${chipsPick('deal', DEAL_TYPES, m.deals||DEAL_TYPES.map(x=>x[0]))}
-      <label for="pSocial">Instagram or YouTube link (optional)<input id="pSocial" value="${esc(m.social)}" placeholder="https://instagram.com/yourname"></label>
+      <label for="pSocial">Instagram or YouTube link<input id="pSocial" value="${esc(m.social)}" placeholder="https://instagram.com/yourname"></label>
       <p class="meta">Kept private. A brand sees this link only after it accepts your application.</p>
       <label for="pFol">Followers on that account<input id="pFol" type="number" min="0" step="1" value="${m.followers||0}"></label>
       <p class="meta">Enter 0 if you have no account and want content-only work. Brands can check your page, so keep this accurate. You can change this once; after that only every 30 days.</p>
-      <label for="pSample">Link to a sample video (optional)<input id="pSample" value="${esc(m.sample_link)}" placeholder="https://"></label>
-      <p class="meta">Shown only to brands whose briefs you apply to.</p>
+      <label for="pSample">Link to a sample video<input id="pSample" value="${esc(m.sample_link)}" placeholder="https://"></label>
+      <p class="meta">${S.cap.profiles?'Brands see this on your profile.':'Shown only to brands whose briefs you apply to.'} Add your page link, a sample video, or both.</p>
       <label for="pRate">Your usual rate per video in ₹ (optional)<input id="pRate" type="number" min="0" step="100" value="${m.rate||''}" placeholder="e.g. 1500"></label>
       ${isNew?'<label for="pAge" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="pAge" type="checkbox" style="width:auto"> I am 18 or older</label>':''}
       <p class="meta" id="pErr" hidden></p>
@@ -452,14 +482,21 @@ function vBrief(){
         ${hasProduct(b)?`<div class="kv"><span>Product</span><span>${esc(b.product_note||'')}${b.product_value?' (worth '+rs(b.product_value)+')':''}</span></div>`:''}
         <div class="kv"><span>Deal</span><span>${TYPES[b.type]}: ${TYPE_D[b.type]}</span></div>
         <div class="kv"><span>Followers needed</span><span>${need(b)}</span></div>
-        <div class="kv"><span>Where</span><span>${esc(b.city)}</span></div>
+        <div class="kv"><span>Where</span><span>${esc(b.city)}${b.area?' · '+esc(b.area):''}</span></div>
+        ${b.lang&&b.lang!=='Any'?`<div class="kv"><span>Language</span><span>${esc(b.lang)}</span></div>`:''}
+        ${b.video_len&&b.video_len!=='any'&&VLEN[b.video_len]?`<div class="kv"><span>Video length</span><span>${VLEN[b.video_len]}</span></div>`:''}
+        ${b.due_days&&!aff?`<div class="kv"><span>Deliver within</span><span>${num(b.due_days)} day${b.due_days>1?'s':''} of being accepted</span></div>`:''}
         ${S.bstats[b.brand_id]?`<div class="kv"><span>Brand’s record</span><span>Has completed ${S.bstats[b.brand_id]} deal${S.bstats[b.brand_id]>1?'s':''} on Boli</span></div>`:''}
         <div class="kv"><span>Looking for</span><span>${num(b.creators_needed||1)} creator${(b.creators_needed||1)>1?'s':''}</span></div>
         <div class="kv"><span>Open until</span><span>${shut?'Closed':left(daysLeft(b))}</span></div>
+        ${invitedTo(b.id) && !s && !shut ? `<p><span class="tag ok">Invited</span> <b>${esc(b.brand_name)} invited you to this brief.</b></p>` : ''}
         ${action}
         ${shut?'':`<button class="btn ghost wide" data-act="share" data-v="${b.id}">Share this brief</button>`}
       </div>
       ${extra}
+      ${b.details?`<h3>What the brand wants</h3><p style="white-space:pre-line;overflow-wrap:anywhere">${esc(b.details)}</p>`:''}
+      ${b.must_have?`<h3>Must include</h3><p style="white-space:pre-line;overflow-wrap:anywhere">${esc(b.must_have)}</p>`:''}
+      ${b.avoid?`<h3>Please avoid</h3><p style="white-space:pre-line;overflow-wrap:anywhere">${esc(b.avoid)}</p>`:''}
       <h3>What to shoot</h3>
       <ol class="steps">${STD.map(x=>`<li>${x}</li>`).join('')}</ol>
       <p class="meta">${aff?'The brand gives you your code in messages once you are accepted, and pays your commission directly.':b.comp==='product'?'This is a product-only deal: you keep the product and there is no payment.':'Payment is handled through Boli once the video is approved.'}${b.type!=='content'?' Your post must carry the paid partnership label.':''}</p>
@@ -495,11 +532,13 @@ function vDash(){
     <p class="meta">${TPLD[t]}</p>
     ${comm?'':`<b>What do you want?</b>
     <div class="tdesc">${[['content','UGC video','You receive the video and post it on your own page.'],['collab','Dedicated post','The creator posts a video about you on their page.'],['integration','Integration','Your product features inside one of the creator’s regular videos, on their page.']].map(([k,n,d])=>`<button type="button" data-act="ftype" data-v="${k}" aria-pressed="${S.ft===k}"><b>${n}</b><span>${d}</span></button>`).join('')}</div>`}
-    <label for="fAsk">What should the video show?<textarea id="fAsk" rows="3" maxlength="200" placeholder="e.g. A home cook making misal with our masala">${esc(S.fa)}</textarea></label>
+    <label for="fAsk">${S.cap.briefs?'Brief title':'What should the video show?'}<textarea id="fAsk" rows="${S.cap.briefs?2:3}" maxlength="200" placeholder="e.g. A home cook making misal with our masala">${esc(S.fa)}</textarea></label>
+    ${S.cap.briefs?`<label for="fDet">What should the video show? Add anything the creator needs to know.<textarea id="fDet" rows="4" maxlength="1500" placeholder="e.g. Show the pack, cook one dish with it, and say how it tasted."></textarea></label>`:''}
     <div class="two">
       <label for="fCat">Category<select id="fCat">${opts(Object.entries(CATS), (S.me.cats||[])[0]||'food')}</select></label>
-      <label for="fCity">Where<select id="fCity">${opts([['All Maharashtra','All Maharashtra'],...CITIES.filter(c=>c!=='Other').map(c=>[c,c])],'All Maharashtra')}</select></label>
+      <label for="fCity">Where<select id="fCity">${opts([...WIDE.map(c=>[c,c]),...CITIES.filter(c=>c!=='Other').map(c=>[c,c])],'All Maharashtra')}</select></label>
     </div>
+    ${S.cap.briefs?briefExtras({}):''}
     ${t==='product'||t==='both'?`<div class="two"><label for="fProd">Product you will send<input id="fProd" maxlength="80" placeholder="e.g. 250 g goda masala"></label><label for="fProdV">Product value (₹)<input id="fProdV" type="number" min="0" step="50" value="500"></label></div>`:''}
     <div class="two">
       ${comm?`<label for="fComm">Commission per sale (%)<input id="fComm" type="number" min="1" max="50" value="10"></label>`:t==='product'?'':`<label for="fPay">Pay per video (₹)<input id="fPay" type="number" min="100" step="100" value="1500"></label>`}
@@ -512,7 +551,7 @@ function vDash(){
     ${comm?`<label for="fHooks">Hooks that work, one per line (optional)<textarea id="fHooks" rows="3" placeholder="e.g. One spoon. That is the whole recipe."></textarea></label>`:''}
     ${t==='full'?`<div class="two"><label for="fUp">Sales to reach next level (₹)<input id="fUp" type="number" min="500" step="500" value="2500"></label><label for="fRet">Top-level monthly retainer (₹)<input id="fRet" type="number" min="0" step="500" value="3000"></label></div>
     <div class="two"><label for="fChT">Challenge sales target (₹)<input id="fChT" type="number" min="0" step="500" value="5000"></label><label for="fChB">Challenge bonus (₹)<input id="fChB" type="number" min="0" step="100" value="1000"></label></div>`:''}
-    <p class="meta" id="fErr" hidden>Describe what the video should show.</p>
+    <p class="meta" id="fErr" hidden>${S.cap.briefs?'Add a title for the brief.':'Describe what the video should show.'}</p>
     <button class="btn accent wide" type="submit">Post brief</button>
     <p class="meta">Free while in-app payments are being set up. After that, Boli adds a ${FEE.payg}% fee on each paid deal, or ${FEE.sub}% on the subscription plan.</p>
   </form></div>
@@ -520,10 +559,42 @@ function vDash(){
   ${S.mine.map(b=>{ const apps=b.applications||[], sel=apps.filter(a=>ACTIVE.includes(a.status)).length, exp=b.status==='open'&&expired(b);
     return `<div class="panel"><div class="row"><b>${esc(b.title)}</b><b>${payLabel(b)}</b></div>
       <div class="row" style="flex-wrap:wrap;gap:6px 14px"><span class="meta">${b.status!=='open'?'':exp?'':left(daysLeft(b))+' · '}${apps.length} applicant${apps.length===1?'':'s'} · ${sel} of ${num(b.creators_needed||1)} creator${(b.creators_needed||1)>1?'s':''} selected</span>
-      <span class="row" style="gap:12px;flex-wrap:wrap">${b.status!=='open' ? `<span class="tag">Closed</span><button class="link" data-act="reopenBrief" data-v="${b.id}">Reopen</button>` : exp ? `<span class="tag">Expired</span><button class="link" data-act="extendBrief" data-v="${b.id}">Extend 14 days</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>` : `<button class="link" data-act="share" data-v="${b.id}">Share</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`}</span></div>
+      <span class="row" style="gap:12px;flex-wrap:wrap"><button class="link" data-act="editBrief" data-v="${b.id}">Edit</button>${b.status!=='open' ? `<span class="tag">Closed</span><button class="link" data-act="reopenBrief" data-v="${b.id}">Reopen</button>` : exp ? `<span class="tag">Expired</span><button class="link" data-act="extendBrief" data-v="${b.id}">Extend 14 days</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>` : `<button class="link" data-act="share" data-v="${b.id}">Share</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`}</span></div>
       ${apps.map(a=>appRow(a,b)).join('')}</div>`; }).join('') || '<p class="meta">Briefs you post appear here with everyone who applies.</p>'}
   </div></div>`; }
 
+/* The newer brief fields, shared by the post form (ids start with f) and the edit form (ids start with e). */
+function briefExtras(b, p){
+  p = p || 'f'; const due = String(b.due_days||7), dues = DUES.includes(+due) ? DUES : [...DUES, +due].sort((x,y)=>x-y);
+  return `<div class="two">
+      <label for="${p}Lang">Language<select id="${p}Lang">${opts(BLANGS.map(l=>[l, l==='Any'?'Any language':l]), b.lang||'Any')}</select></label>
+      <label for="${p}Len">Video length<select id="${p}Len">${opts(Object.entries(VLEN), b.video_len||'any')}</select></label>
+    </div>
+    <label for="${p}Due">Deliver within<select id="${p}Due">${opts(dues.map(d=>[String(d), d+' days of being accepted']), due)}</select></label>
+    <label for="${p}Must">Must include (optional)<textarea id="${p}Must" rows="2" maxlength="500" placeholder="e.g. Our brand name, the price, the pack in frame">${esc(b.must_have)}</textarea></label>
+    <label for="${p}Avoid">Please avoid (optional)<textarea id="${p}Avoid" rows="2" maxlength="500" placeholder="e.g. Other brands, health claims">${esc(b.avoid)}</textarea></label>
+    <label for="${p}Area">Local area (optional)<input id="${p}Area" maxlength="60" value="${esc(b.area)}" placeholder="e.g. Andheri, Panchgani"></label>
+    <p class="meta">Use this when you want creators from, or pages about, one place.</p>`;
+}
+const briefExtraVals = p => ({details:fval(p+'Det',1500), lang:BLANGS.includes(($(p+'Lang')||{}).value) ? $(p+'Lang').value : 'Any', video_len:VLEN[($(p+'Len')||{}).value] ? $(p+'Len').value : 'any', due_days:Math.min(60, Math.max(1, parseInt(($(p+'Due')||{}).value)||7)), must_have:fval(p+'Must',500), avoid:fval(p+'Avoid',500), area:fval(p+'Area',60)});
+function vEdit(){
+  const b = S.mine.find(x=>x.id===S.arg);
+  if(!b) return `<button class="link" data-act="nav" data-v="dash">‹ Dashboard</button><p class="meta">This brief is not available.</p>`;
+  const places = [...WIDE, ...CITIES.filter(c=>c!=='Other')]; if(b.city && !places.includes(b.city)) places.push(b.city);
+  return `<div class="sec" style="max-width:620px;margin:0 auto;width:100%"><button class="link" data-act="nav" data-v="dash">‹ Dashboard</button>
+    <span class="eyebrow">${esc(S.me.name)}</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Edit brief</h1>
+    <form id="editForm" class="panel" novalidate>
+      <div class="kv"><span>Creator gets</span><b>${payLabel(b)}</b></div>
+      <div class="kv"><span>Deal</span><span>${TYPES[b.type]||''}</span></div>
+      <p class="meta">Pay and deal type cannot be changed after posting.</p>
+      <label for="eTitle">${S.cap.briefs?'Brief title':'What should the video show?'}<textarea id="eTitle" rows="2" maxlength="200">${esc(b.title)}</textarea></label>
+      ${S.cap.briefs?`<label for="eDet">What should the video show? Add anything the creator needs to know.<textarea id="eDet" rows="4" maxlength="1500">${esc(b.details)}</textarea></label>`:''}
+      <label for="eCity">Where<select id="eCity">${opts(places.map(c=>[c,c]), b.city||'All Maharashtra')}</select></label>
+      ${S.cap.briefs?briefExtras(b,'e'):''}
+      <p class="meta" id="eErr" hidden></p>
+      <div class="cta"><button class="btn accent" type="submit">Save changes</button><button type="button" class="btn ghost" data-act="nav" data-v="dash">Cancel</button></div>
+    </form></div>`;
+}
 function clist(){
   const F = S.flt;
   return S.creators.filter(c=>(!F.ccat||(c.cats||[]).includes(F.ccat)) && (!F.ccity||c.city===F.ccity) && (!F.clang||(c.langs||[]).includes(F.clang)) && c.followers>=+F.cfol)
@@ -578,7 +649,8 @@ function showResend(email, wait){
 function vAccount(){
   const m = S.me;
   return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%"><span class="eyebrow">${m.role==='creator'?'Creator account':'Brand account'}</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${esc(m.name)}${vtag(m)}</h1>
-    <div class="panel"><div class="kv"><span>Email</span><span>${esc(S.user.email||'')}</span></div><div class="kv"><span>City</span><span>${esc(m.city||'')}</span></div>
+    <div class="panel"><div class="kv"><span>Email</span><span>${esc(S.user.email||'')}</span></div><div class="kv"><span>City</span><span>${esc(m.city||'')}${m.area?' · '+esc(m.area):''}</span></div>
+    ${m.role==='creator'&&m.local_focus?`<div class="kv"><span>Local page</span><span>${esc(m.local_focus)}</span></div>`:''}
     ${m.role==='creator'?`<div class="kv"><span>Languages</span><span>${(m.langs||[]).join(', ')}</span></div><div class="kv"><span>You make</span><span>${(m.cats||[]).map(k=>CATS[k]||k).join(', ')}</span></div><div class="kv"><span>Followers</span><span>${num(m.followers)}</span></div><div class="kv"><span>Track record</span><span>${rec(m.id)}</span></div>`:`<div class="kv"><span>Category</span><span>${CATS[(m.cats||[])[0]]||''}</span></div>`}
     <button class="btn wide" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost wide" data-act="signout">Sign out</button></div>
     ${S.alertsOk?`<div class="panel"><b>Email alerts</b><p class="meta">We email you when something happens on your deals.</p><div class="chips" style="flex-wrap:wrap;overflow:visible"><button type="button" class="pill" data-act="alerts" data-v="on" aria-pressed="${S.alerts}">On</button><button type="button" class="pill" data-act="alerts" data-v="off" aria-pressed="${!S.alerts}">Off</button></div></div>`:''}
@@ -605,7 +677,10 @@ function vThread(){
 function nav(){
   const items = !S.user || !S.me ? [['home','Briefs']] : isCreator() ? [['home','Briefs'],['work','My work'],['account','Account']] : [['dash','Dashboard'],['find','Creators'],['home','Briefs'],['account','Account']];
   if(S.me && S.me.is_admin) items.push(['admin','Boli team']);
-  const html = items.map(([v,t])=>`<button class="nv" data-act="nav" data-v="${v}"${S.view===v?' aria-current="page"':''}>${t}</button>`).join('');
+  const cur = S.view==='creator' ? 'find' : S.view==='edit' ? 'dash' : S.view;
+  const html = items.map(([v,t])=>`<button class="nv" data-act="nav" data-v="${v}"${cur===v?' aria-current="page"':''}>${t}</button>`).join('');
+  $('locBtn').textContent = (S.lang || 'All languages') + ' ▾';
+  $('langs').innerHTML = [['','All languages'], ...LANGS.map(l=>[l,l])].map(([v,t])=>`<button class="pill" data-act="setlang" data-v="${v}" aria-pressed="${S.lang===v}">${t}</button>`).join('');
   $('dnav').innerHTML = html; $('dockIn').innerHTML = html; $('dock').hidden = items.length<2;
   $('acct').innerHTML = S.user ? '' : `<button data-act="auth" data-v="in" aria-pressed="false">Sign in</button><button data-act="auth" data-v="up" aria-pressed="true">Join</button>`;
   $('acct').hidden = !!S.user;
@@ -623,8 +698,8 @@ function render(){
   keepForm();
   const fa=$('fAsk'); if(fa) S.fa=fa.value;
   if(S.user && !S.me && S.view!=='profile' && S.view!=='terms' && S.view!=='reset') S.view='profile';
-  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, forgot:vForgot, reset:vReset, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome()};
-  const need_me = ['work','dash','find','account','thread','admin'];
+  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, forgot:vForgot, reset:vReset, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome(), creator:()=>typeof vCreator==='function' ? vCreator() : vHome(), edit:vEdit};
+  const need_me = ['work','dash','find','account','thread','admin','creator','edit'];
   if(need_me.includes(S.view) && !S.me) S.view = 'home';
   if(S.view==='admin' && !(S.me && S.me.is_admin)) S.view = 'home';
   const ban = S.me && S.me.suspended ? '<div class="lock" role="alert" style="margin-bottom:18px"><b>This account is suspended. Contact the Boli team.</b></div>' : '';
@@ -657,8 +732,10 @@ async function route(){
     if(S.user && !S.me && view!=='profile' && view!=='terms' && view!=='reset') to('profile');
     if(view==='profile' && !S.user) to('auth');
     if(view==='auth' && S.user) to(S.me ? (isBrand() ? 'dash' : 'home') : 'profile');
-    if(['work','dash','find','account','thread','admin'].includes(view) && !S.me) to(S.user ? 'profile' : 'home');
+    if(['work','dash','find','account','thread','admin','creator','edit'].includes(view) && !S.me) to(S.user ? 'profile' : 'home');
     if(view==='admin' && !(S.me && S.me.is_admin && typeof openAdmin==='function')) to('home');
+    if(view==='creator' && !(arg && (isBrand() || (S.me && S.me.is_admin)) && typeof openCreator==='function')) to(isBrand() ? 'find' : 'home');
+    if(view==='edit' && !(isBrand() && arg && S.mine.some(b=>b.id===arg))) to(isBrand() ? 'dash' : 'home');
     if((view==='dash' || view==='find') && !isBrand()) to('home');
     if(view==='work' && !isCreator()) to(isBrand() ? 'dash' : 'home');
     if((view==='brief' || view==='thread') && !arg) to('home');
@@ -673,6 +750,7 @@ async function route(){
       if(seq!==routeSeq) return;
     }
     if(view==='admin') return await openAdmin();
+    if(view==='creator') return await openCreator(arg);
     if(view!=='auth') S.authNote = '';
     if(view!=='account') S.pwOpen = false;
     if(view!=='forgot') S.forgotSent = '';
@@ -686,7 +764,8 @@ async function shareBrief(id){
   catch(e){ const t = document.createElement('textarea'); t.value = link; t.setAttribute('readonly',''); t.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(t); t.select(); let done = false; try{ done = document.execCommand('copy'); }catch(_){} t.remove(); toast(done ? 'Link copied' : link); }
 }
 let busyN = 0;
-async function run(fn){ busyN++; document.body.classList.add('busy'); try{ await fn(); }catch(e){ toast(e.message||'Something went wrong. Please try again.'); } finally{ if(--busyN<=0){ busyN=0; document.body.classList.remove('busy'); } } }
+const niceErr = m => /invites_brief_id_creator_id_key/.test(m||'') ? 'You have already invited this creator.' : /row-level security/.test(m||'') ? 'That is not available right now. Refresh the page and try again.' : /violates check constraint/.test(m||'') ? 'One of the fields is too long or not valid. Please shorten it and try again.' : (m||'Something went wrong. Please try again.');
+async function run(fn){ busyN++; document.body.classList.add('busy'); try{ await fn(); }catch(e){ toast(niceErr(e.message)); } finally{ if(--busyN<=0){ busyN=0; document.body.classList.remove('busy'); } } }
 
 /* ---------- events ---------- */
 document.addEventListener('click', e=>{
@@ -720,17 +799,21 @@ document.addEventListener('click', e=>{
   if(a==='reopenBrief') return run(async()=>{ await q(sb.from('briefs').update({status:'open'}).eq('id',v)); await loadAll(); render(); toast('Brief reopened'); });
   if(a==='extendBrief') return run(async()=>{ await q(sb.from('briefs').update({closes_on:todayIN(14)}).eq('id',v)); await loadAll(); render(); toast('Brief extended by 14 days'); });
   if(a==='thread') return go('thread', v);
+  if(a==='creator') return go('creator', v);
+  if(a==='editBrief') return go('edit', v);
   const y = window.scrollY;
   if(a==='cat') S.cat = v||null;
   else if(a==='fopen') S.fo = S.fo===v ? null : v;
   else if(a==='flt') S.flt[el.dataset.f] = v==='true' ? true : v==='false' ? false : v;
   else if(a==='fclear') fdef(v).forEach(([f])=>{ S.flt[f]=DEF[f]; });
   else if(a==='tpl') S.tpl = v;
+  else if(a==='setlang'){ S.lang = v||''; $('langs').hidden = true; $('locBtn').setAttribute('aria-expanded','false'); }
   else return;
   render(); window.scrollTo(0,y);
 });
 
 document.addEventListener('input', e=>{ if(e.target.id==='q'){ S.q=e.target.value; $('grid').innerHTML=gridHTML(); } });
+document.addEventListener('change', e=>{ if(e.target.id==='pCity'){ const w=$('pCityOtherWrap'); if(w){ w.hidden = e.target.value!=='Other'; if(!w.hidden) $('pCityOther').focus(); } } });
 
 function showErr(id, msg){ const p=$(id); p.textContent=msg; p.hidden=false; }
 document.addEventListener('submit', e=>{
@@ -777,14 +860,18 @@ document.addEventListener('submit', e=>{
   if(id==='profForm') return run(async()=>{
     const role = S.me ? S.me.role : ((S.user.user_metadata||{}).role || S.authRole), name=$('pName').value.trim();
     if(!name) return showErr('pErr', role==='creator'?'Add your name.':'Add your brand name.');
-    let row = {id:S.user.id, role, name, city:$('pCity').value};
+    let city = $('pCity').value;
+    if(city==='Other' && $('pCityOther')){ city = $('pCityOther').value.trim().slice(0,60); if(!city) return showErr('pErr','Type your city or town.'); }
+    let row = {id:S.user.id, role, name, city};
     if(role==='creator'){
       const langs=picked('lang'), cats=picked('cat');
       if(!langs.length || !cats.length) return showErr('pErr','Pick at least one language and one thing you make.');
       if(!S.me && !$('pAge').checked) return showErr('pErr','You need to be 18 or older to join.');
       const social=fixUrl($('pSocial').value), sample=fixUrl($('pSample').value);
       if((social&&!url(social)) || (sample&&!url(sample))) return showErr('pErr','Check the links: they should look like instagram.com/yourname');
+      if(!social && !sample) return showErr('pErr','Add your page link or a sample video so brands can see your work.');
       row = {...row, langs, cats, deals:picked('deal'), social:social||null, followers:Math.max(0,parseInt($('pFol').value)||0), sample_link:sample||null, rate:parseInt($('pRate').value)||null};
+      if(S.cap.profiles) row = {...row, bio:fval('pBio',300), area:fval('pArea',60), local_focus:fval('pLocal',60)};
     } else {
       const site=fixUrl($('pSite').value); if(site&&!url(site)) return showErr('pErr','Check the link: it should look like yourbrand.in or instagram.com/yourbrand');
       row = {...row, cats:[$('pCat').value], site:site||null};
@@ -793,6 +880,14 @@ document.addEventListener('submit', e=>{
     if(isNew) await q(sb.from('profiles').insert(row)); else { const {id:_i, role:_r, ...patch} = row; await q(sb.from('profiles').update(patch).eq('id', S.user.id)); }
     await loadAll(); toast(isNew?'Welcome to Boli':'Profile saved');
     isNew ? afterLogin() : go('account');
+  });
+  if(id==='editForm') return run(async()=>{
+    const bid = S.arg, title = $('eTitle').value.trim();
+    if(title.length<3) return showErr('eErr','Add a title for the brief.');
+    const patch = {title, city:$('eCity').value};
+    if(S.cap.briefs) Object.assign(patch, briefExtraVals('e'));
+    await q(sb.from('briefs').update(patch).eq('id', bid)); delete S.extra[bid];
+    await loadAll(); toast('Brief updated'); go('dash');
   });
   if(id==='vidForm') return run(async()=>{
     const link=fixUrl($('vLink').value); if(!url(link)) return toast('Paste the full link to your video.');
@@ -824,6 +919,7 @@ document.addEventListener('submit', e=>{
         const ct=+$('fChT').value||0, cb=+$('fChB').value||0; if(ct&&cb) nb.challenge={t:'Sell '+rs(ct)+' this month', bonus:cb};
       }
     }
+    if(S.cap.briefs) Object.assign(nb, briefExtraVals('f'));
     await q(sb.from('briefs').insert(nb)); S.fa=''; $('fAsk').value=''; S.bfClear=true; await loadAll(); render(); toast('Brief posted. Creators can see it now.');
   });
 });
@@ -833,7 +929,7 @@ function afterLogin(){ const p=S.pend; S.pend=null; if(p && isCreator()) return 
 (async function start(){
   try{
     /* getSession resolves only after supabase-js has read any sign-in tokens from the address, so the hash is left alone until then. */
-    const {data:{session}} = await sb.auth.getSession(); S.user = session ? session.user : null;
+    const [{data:{session}}] = await Promise.all([sb.auth.getSession(), probeCaps()]); S.user = session ? session.user : null;
     await loadAll();
   }catch(e){ $('view').innerHTML = '<p class="meta">Boli could not load. Check your connection and refresh the page.</p>'; return; }
   routeReady = true;
@@ -994,7 +1090,7 @@ function appRow(a, b){
     : `<p class="meta" style="flex-basis:100%">Send the product to: ${esc(d.recipient)}, ${esc(d.address)}, phone ${esc(d.phone)}</p>` + (a.shipped_at
       ? `<p class="meta" style="flex-basis:100%"><span class="tag ok">Shipped</span>${a.tracking?' Tracking: '+esc(a.tracking):''}</p>`
       : `<div class="th-box"><div class="th-inline"><input id="tTrk-${esc(a.id)}" maxlength="80" placeholder="Tracking number (optional)" aria-label="Tracking number, optional"><button class="pill" data-act="t-ship" data-v="${esc(a.id)}">Mark product shipped</button></div></div>`)) : '';
-  return `<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b>${c.verified?' <span class="tag ok">Verified</span>':''}<br><span class="meta">${esc(c.city||'')} · ${num(c.followers)} followers · ${rec(c.id)} · ${lab}</span></div>
+  return `<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><button type="button" class="link" style="color:inherit;font-weight:700" data-act="creator" data-v="${esc(c.id)}" aria-label="Open ${esc(c.name)}’s profile">${esc(c.name)}</button>${c.verified?' <span class="tag ok">Verified</span>':''}<br><span class="meta">${esc(c.city||'')}${c.area?', '+esc(c.area):''} · ${num(c.followers)} followers · ${rec(c.id)} · ${lab}</span></div>
     ${sm?`<a class="pill" href="${esc(sm)}" target="_blank" rel="noopener">Sample video</a>`:''}${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${v&&s!=='applied'?`<a class="pill" href="${esc(v)}" target="_blank" rel="noopener">Watch video</a>`:''}${acts}<button class="pill" data-act="thread" data-v="${esc(a.id)}">Messages</button>
     ${chgOpen?`<div class="th-box"><label for="tChgTxt">What should the creator change?<textarea id="tChgTxt" rows="3" maxlength="500" placeholder="e.g. Please reshoot the opening so the pack is visible.">${esc(S.tChgTxt||'')}</textarea></label><div class="th-inline"><button class="btn" data-act="t-changes-send" data-v="${esc(a.id)}">Send request</button><button class="link" data-act="t-changes-cancel">Cancel</button></div></div>`:''}
     ${s==='accepted'&&a.change_note?`<p class="meta" style="flex-basis:100%">You asked for changes: ${esc(a.change_note)}</p>`:''}
@@ -1254,6 +1350,163 @@ document.addEventListener('input', e=>{
   const box = $('adPeople'); if(box) box.innerHTML = adPeopleList();
 });
 document.addEventListener('keydown', e=>{ if(e.key==='Enter' && e.target.id==='adFol'){ e.preventDefault(); const b = document.querySelector('[data-act="ad-folsave"]'); if(b) b.click(); } });
+</script>
+
+<!-- part_find -->
+<style>
+.f-top{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.f-search{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:11px 18px;width:100%;max-width:420px;min-width:0}
+.f-card{flex-wrap:wrap;align-items:flex-start}
+.f-card > div{overflow-wrap:anywhere}
+.f-card .f-acts{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;padding-left:56px}
+.f-bio{margin:6px 0 0 0;overflow-wrap:anywhere}
+.f-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.f-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.f-head .av{flex:none;width:60px;height:60px;border-radius:50%;background:linear-gradient(160deg,var(--hue),color-mix(in oklab,var(--hue) 45%,var(--cover-deep)));color:var(--cover-ink);display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:1.2rem}
+.f-head h1{overflow-wrap:anywhere;min-width:0}
+.f-inv{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
+.f-inv:last-child{border-bottom:0}
+.f-inv > span:first-child{flex:1;min-width:0;overflow-wrap:anywhere}
+.f-inv .tag{flex:none}
+.f-prof a.btn{text-decoration:none}
+.f-prof .kv span:last-child{overflow-wrap:anywhere;min-width:0}
+@media (max-width:520px){.f-card .f-acts{padding-left:0}}
+</style>
+<script>
+/* ---------- Find creators, creator profile, invites (part_find) ---------- */
+function fcState(){ if(!S.fc) S.fc = {q:'', local:false}; return S.fc; }
+function fInvOn(){ return !(S.cap && S.cap.invites===false); }
+function fInvites(){ return Array.isArray(S.invites) ? S.invites : []; }
+function fPlace(c){ return [c.city, c.area].map(x=>String(x||'').trim()).filter(Boolean).join(' · '); }
+function fOpenBriefs(){ return (S.mine||[]).filter(b=>b.status==='open' && !expired(b)); }
+function fBriefState(b, cid){
+  const apps = b.applications || [];
+  if(apps.some(a=>a.creator_id===cid)) return 'applied';
+  if(fInvites().some(i=>i.brief_id===b.id && i.creator_id===cid)) return 'invited';
+  if(apps.filter(a=>ACTIVE.includes(a.status)).length >= (b.creators_needed||1)) return 'full';
+  return 'invite';
+}
+function fList(){
+  const st = fcState(), s = st.q.trim().toLowerCase(), lang = S.lang || '';
+  return clist().filter(c =>
+    (!lang || (c.langs||[]).includes(lang)) &&
+    (!st.local || String(c.local_focus||'').trim()) &&
+    (!s || [c.name, c.city, c.area, c.local_focus].map(x=>String(x||'').toLowerCase()).join(' ').includes(s)));
+}
+function fCard(c){
+  const bio = String(c.bio||'').trim(), local = String(c.local_focus||'').trim(), place = fPlace(c);
+  const line = [place, (c.langs||[]).join(', '), (c.cats||[]).map(k=>CATS[k]||k).join(', ')].filter(Boolean).map(esc).join(' · ');
+  const canInvite = isBrand() && fInvOn();
+  return `<div class="person f-card t-${hue((c.cats||[])[0])}"><span class="av">${esc(ini(c.name))}</span>
+    <div><button class="bc-t" data-act="f-open" data-v="${esc(c.id)}" style="text-align:left">${esc(c.name)}</button>${vtag(c)}<br>
+      <span class="meta">${line}</span><br>
+      <span class="meta">${num(c.followers)} followers${c.rate?' · usually '+rs(c.rate):''} · ${esc(rec(c.id))}</span>
+      ${local?`<div class="f-tags"><span class="tag">Local page: ${esc(local)}</span></div>`:''}
+      ${bio?`<p class="meta f-bio">${esc(bio.length>120?bio.slice(0,120).trimEnd()+'…':bio)}</p>`:''}
+    </div>
+    <div class="f-acts"><button class="pill" data-act="f-open" data-v="${esc(c.id)}">View profile</button>${canInvite?`<button class="pill" data-act="f-quick" data-v="${esc(c.id)}" aria-pressed="true">Invite</button>`:''}</div></div>`;
+}
+function fListHTML(){
+  const list = fList();
+  return `<p class="meta" id="fCount">${list.length} creator${list.length===1?'':'s'}${S.lang?' creating in '+esc(S.lang):''}. Follower counts are entered by creators unless marked Verified.</p>
+    <div>${list.map(fCard).join('') || '<div class="panel"><p class="meta">No creators match. Try clearing the search, the Local pages filter or the other filters.</p><div><button class="btn" data-act="f-clear">Clear search and filters</button></div></div>'}</div>`;
+}
+function vFind(){
+  const st = fcState();
+  return `<div class="sec"><span class="eyebrow">Find creators</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Creators on Boli</h1>
+  <div class="f-top"><input class="f-search" id="fQ" type="search" value="${esc(st.q)}" placeholder="Search by name, city, area or place" aria-label="Search creators">
+    <button class="pill" data-act="f-local" aria-pressed="${!!st.local}">Local pages only</button></div>
+  ${fbar('c')}
+  <div id="fList">${fListHTML()}</div>
+  <p class="meta">Open a profile to see a creator’s sample video${fInvOn()?' and invite them to one of your briefs':''}. Their page link is shared once you accept their application.</p></div>`;
+}
+
+function vCreator(){
+  const st = S.cr || {}, c = st.c, admin = !isBrand() && S.me && S.me.is_admin;
+  const back = `<button class="link" data-act="nav" data-v="${admin?'admin':'find'}">‹ ${admin?'Back to Boli team':'All creators'}</button>`;
+  if(!c) return `<div class="sec" style="max-width:640px;margin:0 auto;width:100%">${back}<p class="meta">This creator’s profile is not available.</p></div>`;
+  const local = String(c.local_focus||'').trim(), bio = String(c.bio||'').trim(), place = fPlace(c), sample = url(st.sample);
+  const deals = (c.deals||[]).map(k=>TYPES[k]||k).join(', ');
+  const kv = (k, v) => v ? `<div class="kv"><span>${k}</span><span>${v}</span></div>` : '';
+  let invite = '';
+  if(isBrand() && fInvOn()){
+    const open = fOpenBriefs();
+    invite = `<div class="panel" id="fInv"><h3>Invite to a brief</h3>${open.length ? open.map(b=>{
+        const s = fBriefState(b, c.id);
+        const right = s==='invite' ? `<button class="pill" data-act="f-invite" data-v="${esc(b.id)}" data-c="${esc(c.id)}" aria-pressed="true">Invite</button>`
+          : `<span class="tag${s==='full'?'':' ok'}">${{invited:'Invited', applied:'Already applied', full:'Brief is full'}[s]}</span>`;
+        return `<div class="f-inv"><span><b>${esc(b.title)}</b><br><span class="meta">${esc(payLabel(b))} · ${esc(TYPES[b.type]||'')}</span></span>${right}</div>`;
+      }).join('') + '<p class="meta">The creator gets an email and sees the invitation on Boli. They still choose whether to apply.</p>'
+      : `<p class="meta">Post a brief first, then invite creators to it.</p><div><button class="btn accent" data-act="nav" data-v="dash">Go to dashboard</button></div>`}</div>`;
+  }
+  return `<div class="sec f-prof" style="max-width:640px;margin:0 auto;width:100%">${back}
+    <div class="f-head t-${hue((c.cats||[])[0])}"><span class="av">${esc(ini(c.name))}</span><div style="flex:1;min-width:0"><span class="eyebrow">Creator</span><h1 style="font-size:clamp(1.6rem,5vw,2.2rem)">${esc(c.name)}${vtag(c)}</h1></div></div>
+    ${local?`<div class="f-tags"><span class="tag">Local page: ${esc(local)}</span></div>`:''}
+    ${bio?`<p style="overflow-wrap:anywhere">${esc(bio)}</p>`:''}
+    <div class="panel">
+      ${kv('Location', esc(place))}
+      ${kv('Languages', esc((c.langs||[]).join(', ')))}
+      ${kv('Makes', esc((c.cats||[]).map(k=>CATS[k]||k).join(', ')))}
+      ${kv('Open to', esc(deals))}
+      ${kv('Followers', num(c.followers) + (c.verified ? '' : ' <span class="meta">(entered by the creator)</span>'))}
+      ${kv('Usual rate', c.rate ? rs(c.rate)+' a video' : '')}
+      ${kv('Track record', esc(rec(c.id)))}
+      ${sample?`<div><a class="btn" href="${esc(sample)}" target="_blank" rel="noopener">Watch sample video</a></div>`:(st.loading?'<p class="meta">Loading…</p>':'<p class="meta">This creator has not added a sample video.</p>')}
+      <p class="meta">Their page link is shared with you once you accept their application.</p>
+    </div>
+    ${invite}</div>`;
+}
+
+async function openCreator(id){
+  const admin = !!(S.me && S.me.is_admin);
+  if(!S.me || !(isBrand() || admin)) return go('home');
+  S.cr = {id, c:(S.creators||[]).find(x=>x.id===id) || null, sample:null, loading:true, toInvite: !!(S.cr && S.cr.toInvite && S.cr.id===id)};
+  S.view = 'creator'; S.arg = id; render(); window.scrollTo(0,0);
+  const st = S.cr;
+  try{
+    if(!st.c){
+      const cols = typeof PSEL!=='undefined' ? PSEL : PCOLS;
+      const p = await q(sb.from('profiles').select(cols).eq('id', id).maybeSingle());
+      st.c = p && p.role==='creator' ? p : null;
+    }
+    if(st.c){
+      const r = await sb.rpc('creator_card', {uid:id});
+      st.sample = !r.error && r.data && r.data[0] ? r.data[0].sample_link : null;
+    }
+  }catch(e){ toast(e.message || 'Something went wrong. Please try again.'); }
+  st.loading = false;
+  if(S.cr!==st || S.view!=='creator') return;
+  render();
+  if(st.toInvite){ st.toInvite = false; const el = $('fInv'); if(el) el.scrollIntoView({block:'start'}); }
+}
+
+async function fInvite(briefId, creatorId){
+  await q(sb.from('invites').insert({brief_id:briefId, creator_id:creatorId}));
+  if(!Array.isArray(S.invites)) S.invites = [];
+  S.invites.push({brief_id:briefId, creator_id:creatorId, created_at:new Date().toISOString()});
+  const y = window.scrollY; render(); window.scrollTo(0, y); toast('Invitation sent');
+}
+
+document.addEventListener('click', e=>{
+  const el = e.target.closest('[data-act^="f-"]'); if(!el || el.disabled) return;
+  const a = el.dataset.act, v = el.dataset.v;
+  if(a==='f-open') return go('creator', v);
+  if(a==='f-local'){ const st = fcState(); st.local = !st.local; const y = window.scrollY; render(); window.scrollTo(0, y); return; }
+  if(a==='f-clear'){ const st = fcState(); st.q = ''; st.local = false; ['ccat','ccity','clang','cfol','csort'].forEach(f=>{ if(typeof DEF!=='undefined' && f in DEF) S.flt[f] = DEF[f]; }); render(); return; }
+  if(a==='f-invite') return run(()=>fInvite(v, el.dataset.c));
+  if(a==='f-quick'){
+    if(!isBrand() || !fInvOn()) return;
+    const can = fOpenBriefs().filter(b=>fBriefState(b, v)==='invite');
+    if(can.length===1) return run(()=>fInvite(can[0].id, v));
+    S.cr = {id:v, toInvite:true};
+    return go('creator', v);
+  }
+});
+document.addEventListener('input', e=>{
+  if(e.target.id!=='fQ') return;
+  fcState().q = e.target.value;
+  const box = $('fList'); if(box) box.innerHTML = fListHTML();
+});
 </script>
 
 </body>
