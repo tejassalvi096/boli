@@ -221,8 +221,13 @@ const TPL = {simple:'Payment', product:'Product only', both:'Product + payment',
 const TPLD = {simple:'Pay a set amount for each approved video.', product:'Send your product. The creator keeps it and there is no payment.', both:'Send your product and also pay for each approved video.', affiliate:'Pay a share of every sale a creator brings through their code.', full:'Commission with levels, a retainer for top sellers and a bonus challenge.'};
 const DEF = {type:'', comp:'', city:'', sort:'new', mine:false, ccat:'', ccity:'', clang:'', cfol:'0', csort:'fol'};
 const FEE = {payg:10, sub:5, subPrice:2999};
-const PCOLS = 'id,role,name,city,langs,cats,deals,followers,rate,site,created_at,plan,plan_requested_at';
-const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}};
+const PCOLS = 'id,role,name,city,langs,cats,deals,followers,rate,site,created_at,plan,plan_requested_at,is_admin,suspended,verified';
+/* Set this to a real support address to show a contact link in the footer and on the terms page. */
+const SUPPORT_EMAIL = '';
+const TERMS = ['Deals that start on Boli are agreed, delivered and paid through Boli.','Keep all conversation about a deal inside Boli messages. Phone numbers, emails, links and social handles are hidden in messages.','Give accurate details about yourself, your followers and your brand.','Creators own their videos until the brand pays for them. Paid posts carry the paid partnership label.','Boli may charge brands a service fee on each deal. The fee is always shown before a deal is confirmed.','The Boli team can read deal messages and may step in to help or to resolve a dispute.','Taking a deal that started on Boli off the platform can get your account suspended.','Accounts that break these terms can be suspended or removed.'];
+const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms'];
+const ACTIVE = ['accepted','sent','approved','paid'];
+const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -231,11 +236,15 @@ const num = n => Number(n||0).toLocaleString('en-IN');
 const ini = s => String(s||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();
 const url = u => /^https?:\/\//i.test(u||'') ? u : '';
 const same = (a,b) => String(a)===String(b);
-const daysLeft = b => Math.max(0, Math.ceil((new Date(b.closes_on+'T23:59:59') - Date.now())/864e5));
+const daysLeft = b => Math.max(0, Math.floor((new Date(b.closes_on+'T23:59:59') - Date.now())/864e5));
 const left = d => d<=0 ? 'Closes today' : d===1 ? 'Closes tomorrow' : d+' days left';
 const need = b => b.min_followers ? num(b.min_followers)+'+ followers' : 'Any follower count';
 const payLabel = b => b.type==='affiliate' ? b.comm+'% a sale' : b.comp==='product' ? 'Free product' : b.comp==='both' ? rs(b.pay)+' + product' : rs(b.pay);
 const hasProduct = b => !!b && (b.comp==='product' || b.comp==='both');
+const todayIN = add => new Date(Date.now() + 19800000 + (add||0)*864e5).toISOString().slice(0,10);
+const expired = b => !!b && String(b.closes_on||'') < todayIN();
+const closedB = b => !b || b.status!=='open' || expired(b);
+const vtag = c => c && c.verified ? ' <span class="tag ok">Verified</span>' : '';
 const lastStep = b => b && b.comp==='product' ? 'Completed' : 'Paid';
 const isCreator = () => S.me && S.me.role==='creator';
 const isBrand = () => S.me && S.me.role==='brand';
@@ -247,7 +256,7 @@ function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clea
 /* ---------- data ---------- */
 async function q(p){ const {data,error} = await p; if(error) throw new Error(error.message); return data; }
 async function loadAll(){
-  S.briefs = await q(sb.from('briefs').select('*').eq('status','open').order('created_at',{ascending:false}));
+  S.briefs = (await q(sb.from('briefs').select('*').eq('status','open').order('created_at',{ascending:false}))).filter(b=>!expired(b));
   S.bstats = {}; (await q(sb.rpc('brand_stats'))).forEach(r=>{ S.bstats[r.brand_id]=r.paid; });
   S.me = null; S.apps = []; S.mine = []; S.creators = []; S.stats = {};
   if(!S.user) return;
@@ -267,7 +276,7 @@ async function loadAll(){
   }
 }
 const rec = id => { const r=S.stats[id]; return r&&r.done ? r.done+' video'+(r.done>1?'s':'')+' delivered for '+r.brands+' brand'+(r.brands>1?'s':'') : 'New on Boli'; };
-const briefById = id => S.briefs.find(b=>b.id===id) || (S.apps.find(a=>a.brief_id===id)||{}).briefs || S.mine.find(b=>b.id===id);
+const briefById = id => S.briefs.find(b=>b.id===id) || (S.apps.find(a=>a.brief_id===id)||{}).briefs || S.mine.find(b=>b.id===id) || S.extra[id] || undefined;
 const myApp = briefId => S.apps.find(a=>a.brief_id===briefId);
 function findApp(id){ for(const b of S.mine){ const a=(b.applications||[]).find(x=>x.id===id); if(a) return {a, b, other:(a.profiles||{}).name}; } const a=S.apps.find(x=>x.id===id); return a ? {a, b:a.briefs, other:a.briefs.brand_name} : null; }
 
@@ -335,7 +344,15 @@ function vHome(){
   </section>
   <section class="course">
     <div class="sec"><span class="eyebrow">Creator course</span><h2>Never made a video? A course is on the way.</h2><p>Short lessons that take you from picking your topic to your first paid brief. Coming soon.</p></div>
-  </section>`; }
+  </section>
+  ${footHTML()}`; }
+
+function helpLine(){ return SUPPORT_EMAIL ? `Need help? Write to <a class="link" href="mailto:${esc(SUPPORT_EMAIL)}">${esc(SUPPORT_EMAIL)}</a>.` : 'Need help? Write to the Boli team from any deal’s messages.'; }
+function footHTML(){ return `<footer class="row" style="flex-wrap:wrap;gap:8px 16px;border-top:1px solid var(--line);padding-top:16px"><button class="link" data-act="nav" data-v="terms">Terms</button><span class="meta">${helpLine()}</span></footer>`; }
+function vTerms(){ return `<div class="sec" style="max-width:640px;margin:0 auto;width:100%"><button class="link" data-act="home">‹ Home</button>
+    <h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Boli terms</h1>
+    <div class="panel"><ol class="steps">${TERMS.map(t=>`<li>${t}</li>`).join('')}</ol></div>
+    <p class="meta">${helpLine()}</p></div>`; }
 
 function vAuth(){
   const up = S.authMode==='up';
@@ -345,7 +362,7 @@ function vAuth(){
       ${up?`<b>I am joining as</b><div class="chips" data-g="arole">${[['creator','A creator'],['brand','A brand']].map(([k,t])=>`<button type="button" class="pill" data-act="arole" data-k="${k}" aria-pressed="${S.authRole===k}">${t}</button>`).join('')}</div>`:''}
       <label for="aEmail">Email<input id="aEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
       <label for="aPass">Password<input id="aPass" type="password" autocomplete="${up?'new-password':'current-password'}" minlength="8" required placeholder="${up?'At least 8 characters':'Your password'}"></label>
-      ${up?`<details><summary class="meta" style="cursor:pointer">Read the Boli terms</summary><ol class="steps" style="margin-top:10px"><li>Deals that start on Boli are agreed, delivered and paid through Boli.</li><li>Do not share phone numbers, emails, social handles or payment details with the other side before a video is approved.</li><li>Give accurate details about yourself, your followers and your brand.</li><li>Creators own their videos until the brand pays for them. Paid posts carry the paid partnership label.</li><li>Boli may charge brands a service fee on each deal. The fee is always shown before a deal is confirmed.</li><li>Accounts that break these terms can be suspended or removed.</li></ol></details>
+      ${up?`<details><summary class="meta" style="cursor:pointer">Read the Boli terms</summary><ol class="steps" style="margin-top:10px">${TERMS.map(t=>`<li>${t}</li>`).join('')}</ol></details>
       <label for="aTerms" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="aTerms" type="checkbox" style="width:auto"> I agree to the Boli terms</label>`:''}
       <div class="lock" id="aConfirm" hidden><b>Create a new account for <span id="aConfEmail"></span>?</b><span class="meta">Check the spelling of the email. If you already have a Boli account, choose Sign in below.</span></div>
       <p class="meta" id="aErr" hidden></p>
@@ -368,7 +385,7 @@ function vProfile(){
       <label for="pSocial">Instagram or YouTube link (optional)<input id="pSocial" value="${esc(m.social)}" placeholder="https://instagram.com/yourname"></label>
       <p class="meta">Kept private. A brand sees this link only after it accepts your application.</p>
       <label for="pFol">Followers on that account<input id="pFol" type="number" min="0" step="1" value="${m.followers||0}"></label>
-      <p class="meta">Enter 0 if you have no account and want content-only work. Brands can check your page, so keep this accurate.</p>
+      <p class="meta">Enter 0 if you have no account and want content-only work. Brands can check your page, so keep this accurate. You can change this once; after that only every 30 days.</p>
       <label for="pSample">Link to a sample video (optional)<input id="pSample" value="${esc(m.sample_link)}" placeholder="https://"></label>
       <p class="meta">Shown only to brands whose briefs you apply to.</p>
       <label for="pRate">Your usual rate per video in ₹ (optional)<input id="pRate" type="number" min="0" step="100" value="${m.rate||''}" placeholder="e.g. 1500"></label>
@@ -387,17 +404,18 @@ function vProfile(){
   return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%">${head}${role==='creator'?creator:brand}</div>`; }
 
 function vBrief(){
-  const b = briefById(S.arg); if(!b) return `<button class="link" data-act="home">‹ All briefs</button><p class="meta">This brief is no longer open.</p>`;
-  const a = myApp(b.id), s = a && a.status, aff = b.type==='affiliate', L = b.levels;
+  const b = briefById(S.arg); if(!b) return `<button class="link" data-act="home">‹ All briefs</button><div class="panel"><h3>This brief is closed</h3><p class="meta">It is no longer taking applications. Have a look at the briefs that are open now.</p><div><button class="btn accent" data-act="home">Browse open briefs</button></div></div>`;
+  const a = myApp(b.id), s = a && a.status, aff = b.type==='affiliate', L = b.levels, shut = closedB(b);
   let action;
-  if(!S.user) action = `<button class="btn accent wide" data-act="join" data-v="creator">Create an account to apply</button>`;
+  if(shut && !s && !(isBrand() && b.brand_id===S.user.id)) action = `<p><span class="tag">Closed</span> <b>This brief has closed.</b></p><p class="meta">It is no longer taking applications.</p><button class="btn wide" data-act="home">Browse open briefs</button>`;
+  else if(!S.user) action = `<button class="btn accent wide" data-act="join" data-v="creator">Create an account to apply</button>`;
   else if(isBrand()) action = b.brand_id===S.user.id ? `<button class="btn wide" data-act="nav" data-v="dash">Manage this brief</button>` : `<p class="meta">You are signed in as a brand. Only creators can apply to briefs.</p>`;
   else if(!s) action = ok(b) ? `<button class="btn accent wide" data-act="apply" data-v="${b.id}">${aff?'Ask to join this programme':'Apply for this brief'}</button>` : `<button class="btn wide" disabled>Needs ${need(b)}. You have ${num(S.me.followers)}.</button>`;
   else if(s==='declined') action = `<p class="meta">The brand chose other creators for this brief.</p>`;
-  else action = track(s, b) + (s==='applied' ? `<p class="meta">Sent. You will see it here when the brand responds.</p>`
+  else action = track(s, b) + (typeof dealNotes==='function' ? dealNotes(a, b) : '') + (s==='applied' ? `<p class="meta">Sent. You will see it here when the brand responds.</p>`
     : s==='accepted' ? (hasProduct(b) ? delivery(a) : '') + `<form id="vidForm" class="sec" novalidate><label for="vLink">Link to your finished video<input id="vLink" placeholder="https://" value="${esc(a.video_link)}"></label><p class="meta">Upload it to Google Drive, YouTube (unlisted) or Instagram and paste the link.</p><button class="btn accent wide" type="submit">Send video to the brand</button></form>`
     : s==='sent' ? `<p class="meta">The brand is reviewing your video.</p>`
-    : s==='approved' ? `<p class="meta">${b.comp==='product'?'Approved. Nothing more to do; the brand will mark the deal as completed.':'Approved. Agree payment details with the brand in messages.'}</p>`
+    : s==='approved' ? `<p class="meta">${b.comp==='product'?'Approved. Nothing more to do; the brand will mark the deal as completed.':'Approved. Payment is the next step.'}</p>`
     : `<p><span class="tag ok">${lastStep(b)}</span> ${b.comp==='product'?'The brand has marked this deal as completed.':'The brand has marked this as paid.'}</p>`)
     + `<button class="btn ghost wide" data-act="thread" data-v="${a.id}">Messages with ${esc(b.brand_name)}</button>`;
   const extra = (Array.isArray(L)&&L.length?`<h3>Levels</h3>${L.map(l=>`<div class="lv"><span><b>${esc(l.n)}</b><br><span class="meta">${l.at?'From '+rs(l.at)+' in sales':'Where everyone starts'}</span></span><span style="text-align:right"><b>${Number(l.c)}%</b><br><span class="meta">${l.r?'plus '+rs(l.r)+' a month':'commission only'}</span></span></div>`).join('')}${b.min_videos?`<p class="meta">Post at least ${b.min_videos} videos a month to keep a paid level.</p>`:''}`:'')
@@ -416,13 +434,15 @@ function vBrief(){
         <div class="kv"><span>Followers needed</span><span>${need(b)}</span></div>
         <div class="kv"><span>Where</span><span>${esc(b.city)}</span></div>
         ${S.bstats[b.brand_id]?`<div class="kv"><span>Brand’s record</span><span>Has paid ${S.bstats[b.brand_id]} creator${S.bstats[b.brand_id]>1?'s':''} on Boli</span></div>`:''}
-        <div class="kv"><span>Open until</span><span>${left(daysLeft(b))}</span></div>
+        <div class="kv"><span>Looking for</span><span>${num(b.creators_needed||1)} creator${(b.creators_needed||1)>1?'s':''}</span></div>
+        <div class="kv"><span>Open until</span><span>${shut?'Closed':left(daysLeft(b))}</span></div>
         ${action}
+        ${shut?'':`<button class="btn ghost wide" data-act="share" data-v="${b.id}">Share this brief</button>`}
       </div>
       ${extra}
       <h3>What to shoot</h3>
       <ol class="steps">${STD.map(x=>`<li>${x}</li>`).join('')}</ol>
-      <p class="meta">${aff?'The brand gives you your code in messages once you are accepted, and pays your commission directly.':b.comp==='product'?'This is a product-only deal: you keep the product and there is no payment.':'For now the brand pays you directly once it approves your video. Agree the details in messages.'}${b.type!=='content'?' Your post must carry the paid partnership label.':''}</p>
+      <p class="meta">${aff?'The brand gives you your code in messages once you are accepted, and pays your commission directly.':b.comp==='product'?'This is a product-only deal: you keep the product and there is no payment.':'Payment is handled through Boli once the video is approved.'}${b.type!=='content'?' Your post must carry the paid partnership label.':''}</p>
     </div>
   </div>`; }
 
@@ -477,7 +497,11 @@ function vDash(){
     <p class="meta">Free while in-app payments are being set up. After that, Boli adds a ${FEE.payg}% fee on each paid deal, or ${FEE.sub}% on the subscription plan.</p>
   </form></div>
   <div class="sec"><h2>Your briefs</h2>
-  ${S.mine.map(b=>{ const apps=b.applications||[]; return `<div class="panel"><div class="row"><b>${esc(b.title)}</b><b>${payLabel(b)}</b></div><div class="row"><span class="meta">${b.status==='open'?left(daysLeft(b))+' · ':''}${apps.length} applicant${apps.length===1?'':'s'}</span>${b.status==='open'?`<button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`:'<span class="tag">Closed</span>'}</div>${apps.map(a=>appRow(a,b)).join('')}</div>`; }).join('') || '<p class="meta">Briefs you post appear here with everyone who applies.</p>'}
+  ${S.mine.map(b=>{ const apps=b.applications||[], sel=apps.filter(a=>ACTIVE.includes(a.status)).length, exp=b.status==='open'&&expired(b);
+    return `<div class="panel"><div class="row"><b>${esc(b.title)}</b><b>${payLabel(b)}</b></div>
+      <div class="row" style="flex-wrap:wrap;gap:6px 14px"><span class="meta">${b.status!=='open'?'':exp?'':left(daysLeft(b))+' · '}${apps.length} applicant${apps.length===1?'':'s'} · ${sel} of ${num(b.creators_needed||1)} creator${(b.creators_needed||1)>1?'s':''} selected</span>
+      <span class="row" style="gap:12px;flex-wrap:wrap">${b.status!=='open' ? `<span class="tag">Closed</span><button class="link" data-act="reopenBrief" data-v="${b.id}">Reopen</button>` : exp ? `<span class="tag">Expired</span><button class="link" data-act="extendBrief" data-v="${b.id}">Extend 14 days</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>` : `<button class="link" data-act="share" data-v="${b.id}">Share</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`}</span></div>
+      ${apps.map(a=>appRow(a,b)).join('')}</div>`; }).join('') || '<p class="meta">Briefs you post appear here with everyone who applies.</p>'}
   </div></div>`; }
 
 function clist(){
@@ -490,12 +514,12 @@ function vFind(){
   return `<div class="sec"><span class="eyebrow">Find creators</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Creators on Boli</h1>
   ${fbar('c')}
   <p class="meta">${list.length} creator${list.length===1?'':'s'}. Follower counts are entered by creators and can be checked once you accept an applicant.</p>
-  <div>${list.map(c=>`<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b><br><span class="meta">${esc(c.city||'')} · ${(c.cats||[]).map(k=>CATS[k]||k).join(', ')} · ${num(c.followers)} followers · ${(c.langs||[]).join(', ')}${c.rate?' · usually '+rs(c.rate):''}</span><br><span class="meta">${rec(c.id)}</span></div></div>`).join('') || '<p class="meta">No creators match yet.</p>'}</div>
+  <div>${list.map(c=>`<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b>${vtag(c)}<br><span class="meta">${esc(c.city||'')} · ${(c.cats||[]).map(k=>CATS[k]||k).join(', ')} · ${num(c.followers)} followers · ${(c.langs||[]).join(', ')}${c.rate?' · usually '+rs(c.rate):''}</span><br><span class="meta">${rec(c.id)}</span></div></div>`).join('') || '<p class="meta">No creators match yet.</p>'}</div>
   <p class="meta">To work with a creator, post a brief. When they apply you see their sample video, and their page link is shared once you accept them.</p></div>`; }
 
 function vAccount(){
   const m = S.me;
-  return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%"><span class="eyebrow">${m.role==='creator'?'Creator account':'Brand account'}</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${esc(m.name)}</h1>
+  return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%"><span class="eyebrow">${m.role==='creator'?'Creator account':'Brand account'}</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${esc(m.name)}${vtag(m)}</h1>
     <div class="panel"><div class="kv"><span>Email</span><span>${esc(S.user.email||'')}</span></div><div class="kv"><span>City</span><span>${esc(m.city||'')}</span></div>
     ${m.role==='creator'?`<div class="kv"><span>Languages</span><span>${(m.langs||[]).join(', ')}</span></div><div class="kv"><span>You make</span><span>${(m.cats||[]).map(k=>CATS[k]||k).join(', ')}</span></div><div class="kv"><span>Followers</span><span>${num(m.followers)}</span></div><div class="kv"><span>Track record</span><span>${rec(m.id)}</span></div>`:`<div class="kv"><span>Category</span><span>${CATS[(m.cats||[])[0]]||''}</span></div>`}
     <button class="btn wide" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost wide" data-act="signout">Sign out</button></div>
@@ -516,21 +540,82 @@ function vThread(){
 /* ---------- render ---------- */
 function nav(){
   const items = !S.user || !S.me ? [['home','Briefs']] : isCreator() ? [['home','Briefs'],['work','My work'],['account','Account']] : [['dash','Dashboard'],['find','Creators'],['home','Briefs'],['account','Account']];
+  if(S.me && S.me.is_admin) items.push(['admin','Boli team']);
   const html = items.map(([v,t])=>`<button class="nv" data-act="nav" data-v="${v}"${S.view===v?' aria-current="page"':''}>${t}</button>`).join('');
   $('dnav').innerHTML = html; $('dockIn').innerHTML = html; $('dock').hidden = items.length<2;
   $('acct').innerHTML = S.user ? '' : `<button data-act="auth" data-v="in" aria-pressed="false">Sign in</button><button data-act="auth" data-v="up" aria-pressed="true">Join</button>`;
   $('acct').hidden = !!S.user;
 }
+function keepForm(){
+  if(S.bfClear){ S.bf = {}; S.bfClear = false; return; }
+  const f = $('briefForm'); if(!f) return;
+  f.querySelectorAll('input[id],select[id],textarea[id]').forEach(e=>{ S.bf[e.id] = e.value; });
+}
+function fillForm(){
+  const f = $('briefForm'); if(!f) return;
+  Object.keys(S.bf).forEach(k=>{ const e = $(k); if(e && f.contains(e)) e.value = S.bf[k]; });
+}
 function render(){
-  const fa=$('fAsk'); if(fa) S.fa=fa.value; const ft=$('fType'); if(ft) S.ft=ft.value;
-  if(S.user && !S.me && S.view!=='profile') S.view='profile';
-  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, thread:vThread};
-  const need_me = ['work','dash','find','account','thread'];
+  keepForm();
+  const fa=$('fAsk'); if(fa) S.fa=fa.value;
+  if(S.user && !S.me && S.view!=='profile' && S.view!=='terms') S.view='profile';
+  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome()};
+  const need_me = ['work','dash','find','account','thread','admin'];
   if(need_me.includes(S.view) && !S.me) S.view = 'home';
-  $('view').innerHTML = (V[S.view]||vHome)();
+  if(S.view==='admin' && !(S.me && S.me.is_admin)) S.view = 'home';
+  const ban = S.me && S.me.suspended ? '<div class="lock" role="alert" style="margin-bottom:18px"><b>This account is suspended. Contact the Boli team.</b></div>' : '';
+  $('view').innerHTML = ban + (V[S.view]||vHome)();
+  fillForm();
   nav();
 }
-function go(view, arg){ S.view=view; S.arg=arg===undefined?null:arg; render(); window.scrollTo(0,0); }
+
+/* ---------- routing: #/  #/brief/<id>  #/work  #/dash  #/find  #/account  #/profile  #/auth  #/thread/<id>  #/admin  #/terms ---------- */
+let routeReady = false, routeSeq = 0;
+const hashFor = (view, arg) => '#/' + (view==='home' ? '' : view) + (arg!=null && arg!=='' ? '/' + encodeURIComponent(arg) : '');
+const curHash = () => location.hash.startsWith('#/') ? location.hash : '#/';
+function setHash(view, arg){ try{ history.replaceState(history.state, '', location.pathname + location.search + hashFor(view, arg)); }catch(e){} }
+function go(view, arg){
+  const h = hashFor(view, arg===undefined ? null : arg);
+  if(!routeReady || h===curHash()){ if(location.hash!==h && routeReady) setHash(view, arg); return route(); }
+  location.hash = h;
+}
+async function route(){
+  if(!routeReady) return;
+  const seq = ++routeSeq;
+  try{
+    if(location.hash && !location.hash.startsWith('#/')) setHash('home');
+    const parts = curHash().slice(2).split('/');
+    let view = parts[0] || 'home', arg = parts[1] ? decodeURIComponent(parts[1]) : null;
+    const to = (v, a) => { view = v; arg = a===undefined ? null : a; setHash(view, arg); };
+    if(!ROUTES.includes(view)) to('home');
+    if(S.user && !S.me && view!=='profile' && view!=='terms') to('profile');
+    if(view==='profile' && !S.user) to('auth');
+    if(view==='auth' && S.user) to(S.me ? (isBrand() ? 'dash' : 'home') : 'profile');
+    if(['work','dash','find','account','thread','admin'].includes(view) && !S.me) to(S.user ? 'profile' : 'home');
+    if(view==='admin' && !(S.me && S.me.is_admin && typeof openAdmin==='function')) to('home');
+    if((view==='dash' || view==='find') && !isBrand()) to('home');
+    if(view==='work' && !isCreator()) to(isBrand() ? 'dash' : 'home');
+    if((view==='brief' || view==='thread') && !arg) to('home');
+    if(view==='brief' && !briefById(arg) && !(arg in S.extra)){
+      let b = null; try{ b = await q(sb.from('briefs').select('*').eq('id', arg).maybeSingle()); }catch(e){ b = null; }
+      S.extra[arg] = b || null;
+      if(seq!==routeSeq) return;
+    }
+    if(view==='thread'){
+      if(typeof openThread==='function') return await openThread(arg);
+      S.msgs = await q(sb.from('messages').select('*').eq('application_id', arg).order('created_at'));
+      if(seq!==routeSeq) return;
+    }
+    if(view==='admin') return await openAdmin();
+    S.view = view; S.arg = arg; render(); window.scrollTo(0,0);
+  }catch(e){ toast(e.message || 'Something went wrong. Please try again.'); }
+}
+async function shareBrief(id){
+  const b = briefById(id) || {}, link = location.origin + '/#/brief/' + id;
+  if(navigator.share){ try{ await navigator.share({title:'Boli', text:(b.brand_name ? b.brand_name + ' is looking for creators on Boli. ' : '') + (b.title||''), url:link}); return; }catch(e){ if(e && e.name==='AbortError') return; } }
+  try{ await navigator.clipboard.writeText(link); toast('Link copied'); }
+  catch(e){ const t = document.createElement('textarea'); t.value = link; t.setAttribute('readonly',''); t.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(t); t.select(); let done = false; try{ done = document.execCommand('copy'); }catch(_){} t.remove(); toast(done ? 'Link copied' : link); }
+}
 async function run(fn){ try{ await fn(); }catch(e){ toast(e.message||'Something went wrong. Please try again.'); } }
 
 /* ---------- events ---------- */
@@ -541,18 +626,21 @@ document.addEventListener('click', e=>{
   if(a==='pick'){ el.setAttribute('aria-pressed', el.getAttribute('aria-pressed')!=='true'); return; }
   if(a==='ftype'){ S.ft=v; el.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed', x===el)); return; }
   if(a==='arole'){ S.authRole=el.dataset.k; el.parentElement.querySelectorAll('.pill').forEach(p=>p.setAttribute('aria-pressed', p===el)); return; }
-  if(a==='home') return go(isBrand()&&!v?'home':'home');
+  if(a==='home') return go('home');
+  if(a==='share') return shareBrief(v);
   if(a==='nav') return go(v);
   if(a==='brief') return go('brief', v);
   if(a==='auth'){ S.authMode=v; return go('auth'); }
   if(a==='amode'){ S.authMode = S.authMode==='up'?'in':'up'; return go('auth'); }
   if(a==='join'){ if(S.user) return go(isBrand()?'dash':'home'); S.authRole=v; S.authMode='up'; if(S.view==='brief') S.pend=S.arg; return go('auth'); }
   if(a==='signout') return run(async()=>{ await sb.auth.signOut(); S.user=null; await loadAll(); go('home'); toast('Signed out'); });
-  if(a==='apply') return run(async()=>{ await q(sb.from('applications').insert({brief_id:v, creator_id:S.user.id})); await loadAll(); render(); toast('Applied. You will hear back here.'); });
-  if(a==='status') return run(async()=>{ const s=el.dataset.s; await q(sb.from('applications').update({status:s}).eq('id',v)); await loadAll(); render(); toast({accepted:'Creator accepted',declined:'Application declined',approved:'Video approved',paid:'Marked as paid'}[s]||'Updated'); });
+  if(a==='apply') return run(async()=>{ if(S.me&&S.me.suspended) throw new Error('This account is suspended. Contact the Boli team.'); await q(sb.from('applications').insert({brief_id:v, creator_id:S.user.id})); await loadAll(); render(); toast('Applied. You will hear back here.'); });
+  if(a==='status') return run(async()=>{ const s=el.dataset.s, f=findApp(v), done=f && lastStep(f.b)==='Completed'; await q(sb.from('applications').update({status:s}).eq('id',v)); await loadAll(); render(); toast({accepted:'Creator accepted',declined:'Application declined',approved:'Video approved',paid:done?'Marked as completed':'Marked as paid'}[s]||'Updated'); });
   if(a==='planReq') return run(async()=>{ await q(sb.from('profiles').update({plan_requested_at:new Date().toISOString()}).eq('id',S.user.id)); await loadAll(); render(); toast('Request sent'); });
   if(a==='closeBrief') return run(async()=>{ await q(sb.from('briefs').update({status:'closed'}).eq('id',v)); await loadAll(); render(); toast('Brief closed'); });
-  if(a==='thread') return run(async()=>{ S.msgs = await q(sb.from('messages').select('*').eq('application_id',v).order('created_at')); go('thread', v); });
+  if(a==='reopenBrief') return run(async()=>{ await q(sb.from('briefs').update({status:'open'}).eq('id',v)); await loadAll(); render(); toast('Brief reopened'); });
+  if(a==='extendBrief') return run(async()=>{ await q(sb.from('briefs').update({closes_on:todayIN(14)}).eq('id',v)); await loadAll(); render(); toast('Brief extended by 14 days'); });
+  if(a==='thread') return go('thread', v);
   const y = window.scrollY;
   if(a==='cat') S.cat = v||null;
   else if(a==='fopen') S.fo = S.fo===v ? null : v;
@@ -632,7 +720,7 @@ document.addEventListener('submit', e=>{
         const ct=+$('fChT').value||0, cb=+$('fChB').value||0; if(ct&&cb) nb.challenge={t:'Sell '+rs(ct)+' this month', bonus:cb};
       }
     }
-    await q(sb.from('briefs').insert(nb)); S.fa=''; $('fAsk').value=''; await loadAll(); render(); toast('Brief posted. Creators can see it now.');
+    await q(sb.from('briefs').insert(nb)); S.fa=''; $('fAsk').value=''; S.bfClear=true; await loadAll(); render(); toast('Brief posted. Creators can see it now.');
   });
 });
 
@@ -640,12 +728,424 @@ function afterLogin(){ const p=S.pend; S.pend=null; if(p && isCreator()) return 
 
 (async function start(){
   try{
+    /* getSession resolves only after supabase-js has read any sign-in tokens from the address, so the hash is left alone until then. */
     const {data:{session}} = await sb.auth.getSession(); S.user = session ? session.user : null;
     await loadAll();
-    S.view = S.user && S.me && isBrand() ? 'dash' : 'home';
   }catch(e){ $('view').innerHTML = '<p class="meta">Boli could not load. Check your connection and refresh the page.</p>'; return; }
-  render();
+  routeReady = true;
+  if(!location.hash.startsWith('#/')) setHash(S.user && S.me && isBrand() ? 'dash' : 'home');
+  window.addEventListener('hashchange', route);
+  route();
 })();
 </script>
+<!-- part_thread -->
+<style>
+.th-list{display:flex;flex-direction:column;gap:10px;max-height:56vh;overflow-y:auto;overscroll-behavior:contain;padding:2px}
+.th-m{max-width:85%;display:flex;flex-direction:column;gap:3px;align-self:flex-start;align-items:flex-start;min-width:0}
+.th-m.me{align-self:flex-end;align-items:flex-end}
+.th-m .hook{overflow-wrap:anywhere;margin:0}
+.th-m.me .hook{background:var(--accent-soft)}
+.th-m.team .hook{background:transparent;border:1.5px solid var(--accent)}
+.th-who{font-size:.74rem;font-weight:600;color:var(--muted)}
+.th-m.team .th-who{color:var(--accent)}
+.th-time{font-size:.72rem;color:var(--muted)}
+.th-ev{align-self:center;text-align:center;font-size:.78rem;color:var(--muted);max-width:92%;overflow-wrap:anywhere}
+.th-img{display:block;max-width:180px;max-height:180px;border-radius:14px;object-fit:cover}
+.th-form{display:flex;gap:8px;align-items:center}
+.th-form input{flex:1;min-width:0}
+.th-ref{display:flex;flex-direction:column;gap:10px}
+.th-ref input[type=file]{max-width:100%;font-size:.9rem}
+.th-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.person .th-box{flex:1 1 100%;display:flex;flex-direction:column;gap:8px;min-width:0}
+.th-box textarea,.th-box input{width:100%;min-width:0}
+.th-inline{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.th-inline input{flex:1 1 140px;min-width:0;width:auto}
+</style>
+<script>
+/* ---------- deal thread, dashboard row and deal notes (part B) ---------- */
+const T_REFS = 'https://logstpicpmemtbjuxfvk.supabase.co/storage/v1/object/public/refs/';
+const T_LINK = /^https:\/\/(www\.)?(instagram\.com\/(reel|reels|p)\/|youtube\.com\/(watch|shorts)|youtu\.be\/|drive\.google\.com\/)/i;
+let tPoll = null;
+const tTime = d => new Date(d).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});
+const tInThread = id => S.view==='thread' && S.arg===id && S.th;
+const tCanRef = () => !!(S.th && S.user && (S.th.admin || (S.me && S.me.is_admin) || (S.th.b && S.th.b.brand_id===S.user.id)));
+
+async function tDeal(id){
+  const f = findApp(id);
+  if(f) return {a:f.a, b:f.b||{}, other:f.other, admin:false, brandName:(f.b||{}).brand_name, creatorName:(f.a.profiles||{}).name || (S.me&&S.me.role==='creator'?S.me.name:'')};
+  if(S.me && S.me.is_admin){
+    const a = await q(sb.from('applications').select('*, briefs(*), profiles(id,name)').eq('id',id).maybeSingle());
+    if(a) return {a, b:a.briefs||{}, other:((a.briefs||{}).brand_name||'Brand')+' ↔ '+((a.profiles||{}).name||'Creator'), admin:true, brandName:(a.briefs||{}).brand_name, creatorName:(a.profiles||{}).name};
+  }
+  return null;
+}
+const tMsgs = id => q(sb.from('messages').select('*').eq('application_id',id).order('created_at'));
+function tBottom(){ const l=$('tList'); if(l) l.scrollTop = l.scrollHeight; }
+function tRender(keepFocus){
+  const el = $('tBody'), had = keepFocus && el && document.activeElement===el;
+  render();
+  const n = $('tBody'); if(n && had){ n.focus(); try{ n.setSelectionRange(n.value.length, n.value.length); }catch(e){} }
+  tBottom();
+}
+
+async function openThread(id){
+  try{
+    if(!S.user || !S.me){ S.view='home'; S.arg=null; render(); return; }
+    const th = await tDeal(id);
+    S.msgs = th ? await tMsgs(id) : [];
+    if(!tInThread(id)){ S.thDraft=''; S.thRef=false; }
+    S.th = th; S.view='thread'; S.arg=id; render(); window.scrollTo(0,0); tBottom();
+  }catch(e){ S.th=null; S.msgs=[]; S.view='thread'; S.arg=id; render(); toast(e.message||'Could not open this conversation.'); }
+  clearInterval(tPoll);
+  tPoll = setInterval(async()=>{
+    if(!tInThread(id)){ clearInterval(tPoll); tPoll=null; return; }
+    if(document.hidden) return;
+    try{
+      const ms = await tMsgs(id); if(!tInThread(id)) return;
+      if(ms.length===S.msgs.length) return;
+      const hadEvent = ms.slice(S.msgs.length).some(m=>m.kind==='event');
+      S.msgs = ms;
+      if(hadEvent){ await loadAll(); const th = await tDeal(id); if(!tInThread(id)) return; if(th) S.th = th; tRender(true); }
+      else { const l=$('tList'); if(l){ l.innerHTML = tListHTML(); tBottom(); } }
+    }catch(e){}
+  }, 12000);
+}
+
+function tWho(m){
+  const t = S.th; if(m.kind==='team') return 'Boli team';
+  if(m.sender_id===t.a.creator_id) return t.creatorName||'Creator';
+  if(m.sender_id===t.b.brand_id) return t.brandName||'Brand';
+  return 'Boli team';
+}
+function tAttach(m){
+  const u = url(m.attachment_url); if(!u) return '';
+  if(u.indexOf(T_REFS)===0) return `<a href="${esc(u)}" target="_blank" rel="noopener" aria-label="Open reference image"><img class="th-img" src="${esc(u)}" alt="Reference image" loading="lazy"></a>`;
+  if(T_LINK.test(u)) return `<a class="pill" href="${esc(u)}" target="_blank" rel="noopener">Reference link</a>`;
+  return '';
+}
+function tListHTML(){
+  const t = S.th; if(!t) return '';
+  return (S.msgs||[]).map(m=>{
+    if(m.kind==='event') return `<p class="th-ev">${esc(m.body)} · ${tTime(m.created_at)}</p>`;
+    const me = m.sender_id===S.user.id, team = m.kind==='team';
+    const who = team ? 'Boli team' : (t.admin && !me ? tWho(m) : '');
+    return `<div class="th-m${me?' me':''}${team?' team':''}">${who?`<span class="th-who">${esc(who)}</span>`:''}${tAttach(m)}<p class="hook">${esc(m.body)}</p><span class="th-time">${tTime(m.created_at)}</span></div>`;
+  }).join('') || '<p class="meta">No messages yet. Say hello and agree the details here.</p>';
+}
+
+function vThread(){
+  const t = S.th;
+  if(!t || !same(t.a.id, S.arg)) return `<p class="meta">This conversation is not available.</p>`;
+  const a = t.a, b = t.b, party = !t.admin, isAdm = !!(S.me && S.me.is_admin);
+  const back = t.admin ? `<button class="link" data-act="nav" data-v="admin">‹ Back to Boli team</button>`
+    : (b.brand_id===S.user.id ? `<button class="link" data-act="nav" data-v="dash">‹ Back</button>` : `<button class="link" data-act="brief" data-v="${esc(b.id)}">‹ Back</button>`);
+  const help = a.help_at
+    ? `<span class="meta">The Boli team has been asked to help.</span>${isAdm?`<button class="pill" data-act="t-helpdone" data-v="${esc(a.id)}">Mark help as resolved</button>`:''}`
+    : (party ? `<button class="pill" data-act="t-help" data-v="${esc(a.id)}">Need help? Ask Boli</button>` : '');
+  const ref = tCanRef() ? `<button class="pill" data-act="t-attach" aria-expanded="${!!S.thRef}" aria-pressed="${!!S.thRef}">Add reference</button>` : '';
+  return `<div class="sec" style="max-width:640px;margin:0 auto;width:100%">${back}
+    <span class="eyebrow">${esc(b.title||'')}</span><h2>${t.admin?esc(t.other):'Messages with '+esc(t.other)}</h2>
+    ${a.status==='declined'?'<span class="tag">Not selected</span>':track(a.status, b)}
+    <div class="panel">
+      <div class="th-list" id="tList" aria-live="polite">${tListHTML()}</div>
+      <p class="meta">Phone numbers, emails, links and social handles are hidden in messages. Keep the deal on Boli.</p>
+      <form id="chatForm" class="th-form" novalidate><input id="tBody" maxlength="1000" autocomplete="off" value="${esc(S.thDraft||'')}" placeholder="${t.admin?'Write as Boli team':'Write a message'}" aria-label="Message"><button class="btn accent" type="submit">Send</button></form>
+      ${ref||help?`<div class="th-tools">${ref}${help}</div>`:''}
+      ${ref&&S.thRef?`<div class="lock th-ref">
+        <label for="tFile">Reference image (JPG, PNG or WebP, up to 5 MB)<input id="tFile" type="file" accept="image/jpeg,image/png,image/webp"></label>
+        <label for="tLink">Or a reference link<input id="tLink" inputmode="url" placeholder="https://www.instagram.com/reel/…"></label>
+        <p class="meta">Links can be an Instagram post, a YouTube video or a Google Drive file. Anything typed in the message box is sent along with it.</p>
+        <div><button type="button" class="btn" data-act="t-link">Send link</button></div></div>`:''}
+    </div></div>`;
+}
+
+async function tSend(body, attachment_url){
+  const id = S.arg, row = {application_id:id, sender_id:S.user.id, body};
+  if(attachment_url) row.attachment_url = attachment_url;
+  await q(sb.from('messages').insert(row));
+  S.thDraft = ''; S.msgs = await tMsgs(id);
+  if(!tInThread(id)) return;
+  if(attachment_url) S.thRef = false;
+  render(); tBottom(); const n=$('tBody'); if(n) n.focus();
+}
+
+/* ---------- brand dashboard row ---------- */
+function appRow(a, b){
+  const c = a.profiles || {}, s = a.status, v = url(a.video_link), L = a.links || {}, soc = url(L.social), sm = url(L.sample_link);
+  const done = lastStep(b)==='Completed', d = S.del[a.id];
+  const lab = {applied:'Applied', accepted:a.change_note?'Changes requested':'Accepted, now shooting', declined:'Declined', sent:'Video received', approved:done?'Approved':'Approved, payment due', paid:lastStep(b)}[s];
+  const btn = (st, t, on) => `<button class="pill" data-act="t-status" data-v="${esc(a.id)}" data-s="${st}"${on?' aria-pressed="true"':''}>${t}</button>`;
+  const chgOpen = s==='sent' && same(S.tChg, a.id);
+  const acts = s==='applied' ? btn('accepted','Accept',1)+btn('declined','Decline')
+    : s==='sent' ? btn('approved','Approve video',1)+`<button class="pill" data-act="t-changes" data-v="${esc(a.id)}" aria-expanded="${chgOpen}">Ask for changes</button>`
+    : s==='approved' ? btn('paid', done?'Mark as completed':'Mark as paid', 1) : '';
+  const live = ['accepted','sent','approved','paid'].includes(s);
+  const ship = hasProduct(b) && live ? (
+    !d ? `<p class="meta" style="flex-basis:100%">Waiting for the creator’s delivery details.</p>`
+    : `<p class="meta" style="flex-basis:100%">Send the product to: ${esc(d.recipient)}, ${esc(d.address)}, phone ${esc(d.phone)}</p>` + (a.shipped_at
+      ? `<p class="meta" style="flex-basis:100%"><span class="tag ok">Shipped</span>${a.tracking?' Tracking: '+esc(a.tracking):''}</p>`
+      : `<div class="th-box"><div class="th-inline"><input id="tTrk-${esc(a.id)}" maxlength="80" placeholder="Tracking number (optional)" aria-label="Tracking number, optional"><button class="pill" data-act="t-ship" data-v="${esc(a.id)}">Mark product shipped</button></div></div>`)) : '';
+  return `<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b>${c.verified?' <span class="tag ok">Verified</span>':''}<br><span class="meta">${esc(c.city||'')} · ${num(c.followers)} followers · ${rec(c.id)} · ${lab}</span></div>
+    ${sm?`<a class="pill" href="${esc(sm)}" target="_blank" rel="noopener">Sample video</a>`:''}${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${v&&s!=='applied'?`<a class="pill" href="${esc(v)}" target="_blank" rel="noopener">Watch video</a>`:''}${acts}<button class="pill" data-act="thread" data-v="${esc(a.id)}">Messages</button>
+    ${chgOpen?`<div class="th-box"><label for="tChgTxt">What should the creator change?<textarea id="tChgTxt" rows="3" maxlength="500" placeholder="e.g. Please reshoot the opening so the pack is visible.">${esc(S.tChgTxt||'')}</textarea></label><div class="th-inline"><button class="btn" data-act="t-changes-send" data-v="${esc(a.id)}">Send request</button><button class="link" data-act="t-changes-cancel">Cancel</button></div></div>`:''}
+    ${s==='accepted'&&a.change_note?`<p class="meta" style="flex-basis:100%">You asked for changes: ${esc(a.change_note)}</p>`:''}
+    ${ship}</div>`;
+}
+
+/* ---------- creator's brief page ---------- */
+function dealNotes(a, b){
+  if(!a) return '';
+  return (a.status==='accepted' && a.change_note ? `<div class="lock"><b>The brand asked for changes</b><span>${esc(a.change_note)}</span><span class="meta">Update your video and send the new link below.</span></div>` : '')
+    + (hasProduct(b) && a.shipped_at ? `<p class="meta"><span class="tag ok">Product shipped</span>${a.tracking?' Tracking: '+esc(a.tracking):''}</p>` : '');
+}
+
+/* ---------- events ---------- */
+async function tAppUpdate(id, patch, msg){
+  const y = window.scrollY;
+  await q(sb.from('applications').update(patch).eq('id', id));
+  await loadAll(); render(); window.scrollTo(0, y); toast(msg);
+}
+document.addEventListener('click', e=>{
+  const el = e.target.closest('[data-act^="t-"]'); if(!el || el.disabled) return;
+  const a = el.dataset.act, v = el.dataset.v;
+  if(a==='t-status') return run(async()=>{
+    const s = el.dataset.s, f = findApp(v), done = f && lastStep(f.b)==='Completed';
+    if(same(S.tChg, v)){ S.tChg=null; S.tChgTxt=''; }
+    await tAppUpdate(v, {status:s}, {accepted:'Creator accepted', declined:'Application declined', approved:'Video approved', paid:done?'Marked as completed':'Marked as paid'}[s]||'Updated');
+  });
+  if(a==='t-changes'){ const y=window.scrollY; if(same(S.tChg, v)){ S.tChg=null; } else { S.tChg=v; S.tChgTxt=''; } render(); window.scrollTo(0,y); const t=$('tChgTxt'); if(t) t.focus(); return; }
+  if(a==='t-changes-cancel'){ const y=window.scrollY; S.tChg=null; S.tChgTxt=''; render(); window.scrollTo(0,y); return; }
+  if(a==='t-changes-send') return run(async()=>{
+    const t=$('tChgTxt'), note=(t?t.value:S.tChgTxt||'').trim();
+    if(note.length<5) return toast('Tell the creator what to change.');
+    await q(sb.from('applications').update({status:'accepted', change_note:note}).eq('id', v));
+    const y=window.scrollY; S.tChg=null; S.tChgTxt=''; await loadAll(); render(); window.scrollTo(0,y); toast('Changes requested');
+  });
+  if(a==='t-ship') return run(async()=>{
+    const t=$('tTrk-'+v), tracking=t?t.value.trim().slice(0,80):'';
+    await tAppUpdate(v, {shipped_at:new Date().toISOString(), tracking:tracking||null}, 'Marked as shipped');
+  });
+  if(a==='t-help') return run(async()=>{ await q(sb.rpc('ask_help', {app:v})); await loadAll(); await openThread(v); toast('The Boli team has been asked to help'); });
+  if(a==='t-helpdone') return run(async()=>{ await q(sb.rpc('admin_resolve_help', {app:v})); await loadAll(); await openThread(v); toast('Marked as resolved'); });
+  if(a==='t-attach'){ S.thRef=!S.thRef; tRender(false); return; }
+  if(a==='t-link') return run(async()=>{
+    const t=$('tLink'), link=t?t.value.trim():'';
+    if(!T_LINK.test(link)) return toast('Reference links can be an Instagram post, a YouTube video or a Google Drive file.');
+    await tSend((S.thDraft||'').trim() || 'Reference link', link);
+  });
+});
+document.addEventListener('input', e=>{
+  if(e.target.id==='tBody') S.thDraft = e.target.value;
+  else if(e.target.id==='tChgTxt') S.tChgTxt = e.target.value;
+});
+document.addEventListener('change', e=>{
+  if(e.target.id!=='tFile') return;
+  const file = e.target.files && e.target.files[0]; if(!file) return;
+  run(async()=>{
+    const ext = {'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[file.type];
+    if(!ext){ e.target.value=''; return toast('Choose a JPG, PNG or WebP image.'); }
+    if(file.size > 5*1024*1024){ e.target.value=''; return toast('The image must be 5 MB or smaller.'); }
+    if(!tCanRef()) return;
+    toast('Uploading image…');
+    const path = S.user.id+'/'+crypto.randomUUID()+'.'+ext;
+    const up = await sb.storage.from('refs').upload(path, file, {contentType:file.type});
+    if(up.error) throw new Error(up.error.message||'The image could not be uploaded.');
+    await tSend((S.thDraft||'').trim() || 'Reference image', sb.storage.from('refs').getPublicUrl(path).data.publicUrl);
+    toast('Reference sent');
+  });
+});
+document.addEventListener('submit', e=>{
+  if(e.target.id!=='chatForm') return;
+  e.preventDefault();
+  run(async()=>{
+    const t=$('tBody'), body=(t?t.value:S.thDraft||'').trim(); if(!body || !S.th) return;
+    await tSend(body);
+  });
+});
+</script>
+
+<!-- part_admin -->
+<style>
+/* Boli team admin page */
+.ad-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+@media (min-width:820px){ .ad-tiles{grid-template-columns:repeat(4,minmax(0,1fr))} }
+.ad-tile{background:var(--surface);border-radius:18px;padding:14px 16px;min-width:0}
+.ad-tile b{display:block;font-family:var(--display);font-weight:800;font-size:1.7rem;letter-spacing:-.03em;line-height:1.1;font-variant-numeric:tabular-nums}
+.ad-tile span{font-size:.82rem;color:var(--muted)}
+.ad-tile.warn b{color:var(--accent)}
+.ad-list{display:flex;flex-direction:column}
+.ad-row{display:flex;flex-direction:column;gap:8px;padding:14px 0;border-bottom:1px solid var(--line);min-width:0}
+.ad-row:last-child{border-bottom:0}
+.ad-row > *{min-width:0}
+.ad-row b,.ad-row .meta{overflow-wrap:anywhere}
+.ad-tags,.ad-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.ad-acts .pill{white-space:normal;text-align:left}
+.ad-acts a.pill{text-decoration:none;color:inherit}
+.ad-inline{display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%}
+.ad-inline input{width:130px;flex:none}
+.ad-search{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:11px 18px;width:100%;max-width:420px}
+.ad-top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px}
+</style>
+<script>
+/* ---------- Boli team admin (part_admin) ---------- */
+const AD_TABS = [['attn','Needs attention'],['deals','Deals'],['people','People'],['briefs','Briefs']];
+const AD_STATUS = [['','All'],['applied','Applied'],['accepted','Accepted'],['sent','Video sent'],['approved','Approved'],['paid','Completed'],['declined','Declined']];
+const AD_PEOPLE = [['all','All'],['creator','Creators'],['brand','Brands'],['suspended','Suspended'],['unverified','Unverified creators']];
+const AD_COMP = {pay:'Payment', product:'Product only', both:'Product + payment'};
+
+const adDate = d => d ? new Date(d).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : '';
+const adTime = d => d ? new Date(d).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'}) : '';
+const adToday = () => new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
+const adMs = d => d ? new Date(d).getTime() : 0;
+const adLast = d => Math.max(adMs(d.updated_at), adMs(d.last_msg_at), adMs(d.created_at));
+const adDays = ms => Math.floor((Date.now() - ms) / 864e5);
+const adStatus = d => ({applied:'Applied', accepted:'Accepted, shooting', sent:'Video sent', approved:'Approved', declined:'Declined', paid:d.comp==='product'?'Completed':'Paid'}[d.status] || d.status);
+const adGets = b => b.type==='affiliate' ? 'Commission' : b.comp==='product' ? 'Product only' : b.comp==='both' ? rs(b.pay)+' + product' : rs(b.pay);
+const adBriefStatus = b => b.status!=='open' ? 'Closed' : (b.closes_on && b.closes_on < adToday()) ? 'Expired' : 'Open';
+const adLink = u => /^https?:\/\//i.test(u||'') ? u : '';
+
+function adReasons(d){
+  const r = [];
+  if(d.help_at) r.push('Asked for help');
+  if(['applied','accepted','sent'].includes(d.status)){ const n = adDays(adLast(d)); if(Date.now()-adLast(d) >= 48*36e5) r.push('Quiet for '+n+' day'+(n===1?'':'s')); }
+  if(d.status==='approved'){ const t = adMs(d.updated_at) || adMs(d.created_at); if(Date.now()-t >= 3*864e5) r.push('Approved, not marked '+(d.comp==='product'?'completed':'paid')); }
+  if((d.masked_count||0) >= 2) r.push('Tried to share contact details '+d.masked_count+' times');
+  return r;
+}
+
+async function adLoad(){
+  const [users, deals, briefs] = await Promise.all([q(sb.rpc('admin_users')), q(sb.rpc('admin_deals')), q(sb.rpc('admin_briefs'))]);
+  const old = S.adm || {};
+  S.adm = {tab:old.tab||'attn', dstat:old.dstat||'', pf:old.pf||'all', pq:old.pq||'', confirm:null, fol:null,
+    users:users||[], deals:deals||[], briefs:briefs||[], loadedAt:new Date()};
+}
+async function openAdmin(){
+  if(!(S.me && S.me.is_admin)) return go('home');
+  try{ await adLoad(); }
+  catch(e){ if(!S.adm) S.adm = {tab:'attn', dstat:'', pf:'all', pq:'', confirm:null, fol:null, users:[], deals:[], briefs:[], loadedAt:null, err:e.message||'Could not load.'}; else S.adm.err = e.message||'Could not load.'; }
+  S.view = 'admin'; S.arg = null; render();
+}
+async function adReload(msg){ await adLoad(); render(); if(msg) toast(msg); }
+
+function adDealRow(d, reasons){
+  return `<div class="ad-row">
+    <div><b>${esc(d.brand_name)} ↔ ${esc(d.creator_name)}</b><br><span class="meta">${esc(d.brief_title)}</span></div>
+    <div class="ad-tags"><span class="tag ok">${esc(adStatus(d))}</span>${(reasons||[]).map(x=>`<span class="tag">${esc(x)}</span>`).join('')}</div>
+    <span class="meta">Started ${adDate(d.created_at)} · last activity ${adTime(new Date(adLast(d)))} · ${num(d.msg_count)} message${d.msg_count===1?'':'s'}</span>
+    <div class="ad-acts"><button class="pill" data-act="ad-thread" data-v="${esc(d.id)}">Open messages</button>${d.help_at?`<button class="pill" data-act="ad-resolve" data-v="${esc(d.id)}">Mark help as resolved</button>`:''}</div>
+  </div>`;
+}
+
+function adAttn(){
+  const A = S.adm;
+  const rows = A.deals.map(d=>({d, r:adReasons(d)})).filter(x=>x.r.length).sort((x,y)=>(y.d.help_at?1:0)-(x.d.help_at?1:0) || adLast(x.d)-adLast(y.d));
+  const subs = A.users.filter(u=>u.role==='brand' && u.plan_requested_at && u.plan!=='sub');
+  if(!rows.length && !subs.length) return `<div class="panel"><p class="meta">Nothing needs attention right now.</p></div>`;
+  return `${rows.length?`<div class="panel"><h3>Deals to look at</h3><div class="ad-list">${rows.map(x=>adDealRow(x.d, x.r)).join('')}</div></div>`:''}
+    ${subs.length?`<div class="panel"><h3>Asked for the subscription plan</h3><div class="ad-list">${subs.map(u=>`<div class="ad-row"><div><b>${esc(u.name)}</b><br><span class="meta">${esc(u.email||'')} · asked on ${adDate(u.plan_requested_at)}</span></div></div>`).join('')}</div></div>`:''}`;
+}
+
+function adDeals(){
+  const A = S.adm;
+  const list = A.deals.filter(d=>!A.dstat || d.status===A.dstat).sort((x,y)=>adLast(y)-adLast(x));
+  return `<div class="chips" style="flex-wrap:wrap;overflow:visible">${AD_STATUS.map(([k,t])=>`<button class="pill" data-act="ad-dstat" data-v="${k}" aria-pressed="${A.dstat===k}">${t}</button>`).join('')}</div>
+    <p class="meta">${list.length} deal${list.length===1?'':'s'}</p>
+    <div class="panel"><div class="ad-list">${list.map(d=>adDealRow(d, adReasons(d))).join('') || '<p class="meta">No deals here yet.</p>'}</div></div>`;
+}
+
+function adPeopleList(){
+  const A = S.adm, s = (A.pq||'').trim().toLowerCase();
+  const list = A.users.filter(u => (A.pf==='all' || (A.pf==='creator'&&u.role==='creator') || (A.pf==='brand'&&u.role==='brand') || (A.pf==='suspended'&&u.suspended) || (A.pf==='unverified'&&u.role==='creator'&&!u.verified))
+      && (!s || ((u.name||'')+' '+(u.email||'')).toLowerCase().includes(s)))
+    .sort((x,y)=>adMs(y.created_at)-adMs(x.created_at));
+  return `<p class="meta">${list.length} ${list.length===1?'person':'people'}</p>
+    <div class="panel"><div class="ad-list">${list.map(adPerson).join('') || '<p class="meta">Nobody matches.</p>'}</div></div>`;
+}
+function adPerson(u){
+  const A = S.adm, me = S.user && u.id===S.user.id, cr = u.role==='creator';
+  const soc = adLink(u.social), sm = adLink(u.sample_link), site = adLink(u.site);
+  const facts = [cr?'Creator':'Brand', u.city, cr?num(u.followers)+' followers':'', 'Joined '+adDate(u.created_at)].filter(Boolean).join(' · ');
+  return `<div class="ad-row">
+    <div><b>${esc(u.name||'No profile yet')}</b>${me?' <span class="meta">(you)</span>':''}<br><span class="meta">${esc(u.email||'')}</span><br><span class="meta">${esc(facts)}</span></div>
+    <div class="ad-tags">${u.confirmed?'':'<span class="tag">Email not confirmed</span>'}${u.verified?'<span class="tag ok">Verified</span>':''}${u.suspended?'<span class="tag">Suspended</span>':''}${u.plan==='sub'?'<span class="tag ok">Subscription</span>':''}</div>
+    <div class="ad-acts">
+      ${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${sm?`<a class="pill" href="${esc(sm)}" target="_blank" rel="noopener">Sample video</a>`:''}${site?`<a class="pill" href="${esc(site)}" target="_blank" rel="noopener">Website</a>`:''}
+      ${cr?`<button class="pill" data-act="ad-verify" data-v="${esc(u.id)}" data-on="${u.verified?'0':'1'}">${u.verified?'Remove verification':'Verify'}</button>`:''}
+      ${cr?`<button class="pill" data-act="ad-fol" data-v="${esc(u.id)}" aria-pressed="${A.fol===u.id}">Correct followers</button>`:''}
+      ${u.suspended?`<button class="pill" data-act="ad-unsuspend" data-v="${esc(u.id)}">Lift suspension</button>`:me?'':`<button class="pill" data-act="ad-suspend" data-v="${esc(u.id)}">Suspend</button>`}
+    </div>
+    ${A.fol===u.id?`<div class="ad-inline"><input id="adFol" type="number" min="0" step="1" value="${Number(u.followers)||0}" aria-label="Follower count for ${esc(u.name)}"><button class="pill" data-act="ad-folsave" data-v="${esc(u.id)}" aria-pressed="true">Save</button><button class="link" data-act="ad-cancel">Cancel</button></div>`:''}
+    ${A.confirm===u.id?`<div class="lock"><b>Suspend this account?</b><span class="meta">${esc(u.name||u.email||'This person')} will not be able to post briefs, apply or send messages until you lift the suspension.</span><div class="ad-acts"><button class="pill" data-act="ad-suspend-yes" data-v="${esc(u.id)}" aria-pressed="true">Yes, suspend</button><button class="link" data-act="ad-cancel">Cancel</button></div></div>`:''}
+  </div>`;
+}
+function adPeople(){
+  const A = S.adm;
+  return `<input class="ad-search" id="adQ" type="search" value="${esc(A.pq)}" placeholder="Search by name or email" aria-label="Search people">
+    <div class="chips" style="flex-wrap:wrap;overflow:visible">${AD_PEOPLE.map(([k,t])=>`<button class="pill" data-act="ad-pf" data-v="${k}" aria-pressed="${A.pf===k}">${t}</button>`).join('')}</div>
+    <div class="sec" id="adPeople">${adPeopleList()}</div>`;
+}
+
+function adBriefs(){
+  const list = [...S.adm.briefs].sort((x,y)=>adMs(y.created_at)-adMs(x.created_at));
+  return `<p class="meta">${list.length} brief${list.length===1?'':'s'}</p>
+    <div class="panel"><div class="ad-list">${list.map(b=>{ const st = adBriefStatus(b); return `<div class="ad-row">
+      <div><b>${esc(b.title)}</b><br><span class="meta">${esc(b.brand_name)} · ${esc(TYPES[b.type]||b.type)} · ${esc(adGets(b))}</span></div>
+      <div class="ad-tags"><span class="tag${st==='Open'?' ok':''}">${st}</span><span class="meta">${num(b.applicants)} applicant${b.applicants===1?'':'s'} · wants ${num(b.creators_needed)} · posted ${adDate(b.created_at)}${b.closes_on?' · closes '+adDate(b.closes_on+'T12:00:00'):''}</span></div>
+      <div class="ad-acts"><button class="pill" data-act="ad-brief" data-v="${esc(b.id)}">Open brief page</button></div>
+    </div>`; }).join('') || '<p class="meta">No briefs yet.</p>'}</div></div>`;
+}
+
+function vAdmin(){
+  const A = S.adm;
+  if(!A) return `<p class="meta">Loading…</p>`;
+  const U = A.users, D = A.deals, wk = Date.now() - 7*864e5;
+  const attn = D.filter(d=>adReasons(d).length).length + U.filter(u=>u.role==='brand'&&u.plan_requested_at&&u.plan!=='sub').length;
+  const tiles = [
+    [U.filter(u=>u.role==='creator').length, 'Creators'],
+    [U.filter(u=>u.role==='brand').length, 'Brands'],
+    [A.briefs.filter(b=>adBriefStatus(b)==='Open').length, 'Open briefs'],
+    [D.filter(d=>['accepted','sent','approved'].includes(d.status)).length, 'Active deals'],
+    [D.filter(d=>d.status==='paid').length, 'Completed deals'],
+    [U.filter(u=>adMs(u.created_at)>=wk).length, 'Sign-ups in the last 7 days'],
+    [U.filter(u=>!u.confirmed).length, 'Emails not confirmed', 1],
+    [U.filter(u=>u.plan_requested_at&&u.plan!=='sub').length, 'Subscription requests', 1]];
+  const body = A.tab==='deals' ? adDeals() : A.tab==='people' ? adPeople() : A.tab==='briefs' ? adBriefs() : adAttn();
+  return `<div class="sec">
+    <div class="ad-top"><div><span class="eyebrow">Boli team</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Overview</h1></div>
+      <div class="ad-acts"><span class="meta">${A.loadedAt?'Updated '+adTime(A.loadedAt):''}</span><button class="pill" data-act="ad-refresh">Refresh</button></div></div>
+    ${A.err?`<p class="meta">Could not load the latest data: ${esc(A.err)}</p>`:''}
+    <div class="ad-tiles">${tiles.map(([n,t,w])=>`<div class="ad-tile${w&&n?' warn':''}"><b>${num(n)}</b><span>${t}</span></div>`).join('')}</div>
+    <div class="chips" style="flex-wrap:wrap;overflow:visible" role="tablist" aria-label="Boli team sections">${AD_TABS.map(([k,t])=>`<button class="pill" role="tab" data-act="ad-tab" data-v="${k}" aria-selected="${A.tab===k}" aria-pressed="${A.tab===k}">${t}${k==='attn'&&attn?' · '+attn:''}</button>`).join('')}</div>
+    ${body}
+  </div>`;
+}
+
+document.addEventListener('click', e=>{
+  const el = e.target.closest('[data-act^="ad-"]'); if(!el || el.disabled || !S.adm) return;
+  const a = el.dataset.act, v = el.dataset.v, A = S.adm;
+  const keep = fn => { const y = window.scrollY; fn(); render(); window.scrollTo(0, y); };
+  if(a==='ad-tab') return keep(()=>{ A.tab = v; A.confirm = null; A.fol = null; });
+  if(a==='ad-dstat') return keep(()=>{ A.dstat = v; });
+  if(a==='ad-pf') return keep(()=>{ A.pf = v; A.confirm = null; A.fol = null; });
+  if(a==='ad-cancel') return keep(()=>{ A.confirm = null; A.fol = null; });
+  if(a==='ad-suspend') return keep(()=>{ A.confirm = v; A.fol = null; });
+  if(a==='ad-fol') return keep(()=>{ A.fol = A.fol===v ? null : v; A.confirm = null; });
+  if(a==='ad-thread') return go('thread', v);
+  if(a==='ad-brief') return go('brief', v);
+  if(a==='ad-refresh') return run(async()=>{ el.disabled = true; delete A.err; await adReload('Updated'); });
+  if(a==='ad-resolve') return run(async()=>{ await q(sb.rpc('admin_resolve_help', {app:v})); await adReload('Marked as resolved'); });
+  if(a==='ad-verify') return run(async()=>{ const on = el.dataset.on==='1'; await q(sb.rpc('admin_set', {uid:v, p_suspended:null, p_verified:on, p_followers:null})); await adReload(on?'Creator verified':'Verification removed'); });
+  if(a==='ad-suspend-yes') return run(async()=>{ if(S.user && v===S.user.id) return toast('You cannot suspend your own account.'); await q(sb.rpc('admin_set', {uid:v, p_suspended:true, p_verified:null, p_followers:null})); await adReload('Account suspended'); });
+  if(a==='ad-unsuspend') return run(async()=>{ await q(sb.rpc('admin_set', {uid:v, p_suspended:false, p_verified:null, p_followers:null})); await adReload('Suspension lifted'); });
+  if(a==='ad-folsave') return run(async()=>{ const raw = ($('adFol')||{}).value, n = parseInt(raw, 10); if(!(n >= 0)) return toast('Enter a follower count of 0 or more.'); await q(sb.rpc('admin_set', {uid:v, p_suspended:null, p_verified:null, p_followers:n})); await adReload('Follower count corrected'); });
+});
+document.addEventListener('input', e=>{
+  if(e.target.id!=='adQ' || !S.adm) return;
+  S.adm.pq = e.target.value; S.adm.confirm = null; S.adm.fol = null;
+  const box = $('adPeople'); if(box) box.innerHTML = adPeopleList();
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Enter' && e.target.id==='adFol'){ e.preventDefault(); const b = document.querySelector('[data-act="ad-folsave"]'); if(b) b.click(); } });
+</script>
+
 </body>
 </html>
