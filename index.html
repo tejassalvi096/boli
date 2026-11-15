@@ -211,7 +211,9 @@ const STEP_AT = {applied:1, accepted:2, sent:3, approved:4, paid:5};
 const TPL = {simple:'Fixed fee', affiliate:'Commission', full:'Full programme'};
 const TPLD = {simple:'Pay a set amount for each approved video.', affiliate:'Pay a share of every sale a creator brings through their code.', full:'Commission with levels, a retainer for top sellers and a bonus challenge.'};
 const DEF = {type:'', city:'', sort:'new', mine:false, ccat:'', ccity:'', clang:'', cfol:'0', csort:'fol'};
-const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:''};
+const FEE = {payg:10, sub:5, subPrice:2999};
+const PCOLS = 'id,role,name,city,langs,cats,deals,followers,rate,site,created_at,plan,plan_requested_at';
+const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', stats:{}, bstats:{}};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -235,15 +237,24 @@ function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clea
 async function q(p){ const {data,error} = await p; if(error) throw new Error(error.message); return data; }
 async function loadAll(){
   S.briefs = await q(sb.from('briefs').select('*').eq('status','open').order('created_at',{ascending:false}));
-  S.me = null; S.apps = []; S.mine = []; S.creators = [];
+  S.bstats = {}; (await q(sb.rpc('brand_stats'))).forEach(r=>{ S.bstats[r.brand_id]=r.paid; });
+  S.me = null; S.apps = []; S.mine = []; S.creators = []; S.stats = {};
   if(!S.user) return;
-  S.me = await q(sb.from('profiles').select('*').eq('id',S.user.id).maybeSingle());
-  if(isCreator()) S.apps = await q(sb.from('applications').select('*, briefs(*)').eq('creator_id',S.user.id).order('created_at',{ascending:false}));
+  S.me = await q(sb.from('profiles').select(PCOLS).eq('id',S.user.id).maybeSingle());
+  if(!S.me) return;
+  (await q(sb.rpc('creator_stats'))).forEach(r=>{ S.stats[r.creator_id]=r; });
+  if(isCreator()){
+    const l = (await q(sb.rpc('my_links')))[0] || {}; S.me.social = l.social; S.me.sample_link = l.sample_link;
+    S.apps = await q(sb.from('applications').select('*, briefs(*)').eq('creator_id',S.user.id).order('created_at',{ascending:false}));
+  }
   if(isBrand()){
-    S.mine = await q(sb.from('briefs').select('*, applications(*, profiles(*))').eq('brand_id',S.user.id).order('created_at',{ascending:false}));
-    S.creators = await q(sb.from('profiles').select('*').eq('role','creator').order('followers',{ascending:false}));
+    S.mine = await q(sb.from('briefs').select('*, applications(*, profiles('+PCOLS+'))').eq('brand_id',S.user.id).order('created_at',{ascending:false}));
+    const links = {}; (await q(sb.rpc('applicant_links'))).forEach(r=>{ links[r.application_id]=r; });
+    S.mine.forEach(b=>(b.applications||[]).forEach(a=>{ a.links = links[a.id]||{}; }));
+    S.creators = await q(sb.from('profiles').select(PCOLS).eq('role','creator').order('followers',{ascending:false}));
   }
 }
+const rec = id => { const r=S.stats[id]; return r&&r.done ? r.done+' video'+(r.done>1?'s':'')+' delivered for '+r.brands+' brand'+(r.brands>1?'s':'') : 'New on Boli'; };
 const briefById = id => S.briefs.find(b=>b.id===id) || (S.apps.find(a=>a.brief_id===id)||{}).briefs || S.mine.find(b=>b.id===id);
 const myApp = briefId => S.apps.find(a=>a.brief_id===briefId);
 function findApp(id){ for(const b of S.mine){ const a=(b.applications||[]).find(x=>x.id===id); if(a) return {a, b, other:(a.profiles||{}).name}; } const a=S.apps.find(x=>x.id===id); return a ? {a, b:a.briefs, other:a.briefs.brand_name} : null; }
@@ -268,7 +279,7 @@ function fdef(k){
     ['ccity','City',[['','Anywhere'],...[...new Set(S.creators.map(c=>c.city).filter(Boolean))].map(c=>[c,c])]],
     ['clang','Language',[['','Any'],...LANGS.map(l=>[l,l])]],
     ['cfol','Followers',[['0','Any'],['1000','1,000+'],['5000','5,000+'],['10000','10,000+']]],
-    ['csort','Sort by',[['fol','Most followers'],['new','Newest']]]];
+    ['csort','Sort by',[['fol','Most followers'],['done','Most delivered'],['new','Newest']]]];
 }
 function fbar(k){
   const groups = fdef(k), open = S.fo===k;
@@ -321,6 +332,8 @@ function vAuth(){
       ${up?`<b>I am joining as</b><div class="chips" data-g="arole">${[['creator','A creator'],['brand','A brand']].map(([k,t])=>`<button type="button" class="pill" data-act="arole" data-k="${k}" aria-pressed="${S.authRole===k}">${t}</button>`).join('')}</div>`:''}
       <label for="aEmail">Email<input id="aEmail" type="email" autocomplete="email" required placeholder="you@example.com"></label>
       <label for="aPass">Password<input id="aPass" type="password" autocomplete="${up?'new-password':'current-password'}" minlength="8" required placeholder="${up?'At least 8 characters':'Your password'}"></label>
+      ${up?`<details><summary class="meta" style="cursor:pointer">Read the Boli terms</summary><ol class="steps" style="margin-top:10px"><li>Deals that start on Boli are agreed, delivered and paid through Boli.</li><li>Do not share phone numbers, emails, social handles or payment details with the other side before a video is approved.</li><li>Give accurate details about yourself, your followers and your brand.</li><li>Creators own their videos until the brand pays for them. Paid posts carry the paid partnership label.</li><li>Boli may charge brands a service fee on each deal. The fee is always shown before a deal is confirmed.</li><li>Accounts that break these terms can be suspended or removed.</li></ol></details>
+      <label for="aTerms" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="aTerms" type="checkbox" style="width:auto"> I agree to the Boli terms</label>`:''}
       <p class="meta" id="aErr" hidden></p>
       <button class="btn accent wide" type="submit" id="aBtn">${up?'Create account':'Sign in'}</button>
       <button type="button" class="link" data-act="amode">${up?'Already have an account? Sign in':'New here? Create an account'}</button>
@@ -339,9 +352,11 @@ function vProfile(){
       <b>What you make</b>${chipsPick('cat', Object.entries(CATS), m.cats||[])}
       <b>Deals you are open to</b>${chipsPick('deal', Object.entries(DEALS), m.deals||Object.keys(DEALS))}
       <label for="pSocial">Instagram or YouTube link (optional)<input id="pSocial" value="${esc(m.social)}" placeholder="https://instagram.com/yourname"></label>
+      <p class="meta">Kept private. A brand sees this link only after it accepts your application.</p>
       <label for="pFol">Followers on that account<input id="pFol" type="number" min="0" step="1" value="${m.followers||0}"></label>
       <p class="meta">Enter 0 if you have no account and want content-only work. Brands can check your page, so keep this accurate.</p>
       <label for="pSample">Link to a sample video (optional)<input id="pSample" value="${esc(m.sample_link)}" placeholder="https://"></label>
+      <p class="meta">Shown only to brands whose briefs you apply to.</p>
       <label for="pRate">Your usual rate per video in ₹ (optional)<input id="pRate" type="number" min="0" step="100" value="${m.rate||''}" placeholder="e.g. 1500"></label>
       ${isNew?'<label for="pAge" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="pAge" type="checkbox" style="width:auto"> I am 18 or older</label>':''}
       <p class="meta" id="pErr" hidden></p>
@@ -385,6 +400,7 @@ function vBrief(){
         <div class="kv"><span>Deal</span><span>${TYPES[b.type]}: ${b.type==='collab'?'you post it on your own page':aff?'you post with your own code and earn on each sale':'the brand posts it, you do not have to'}</span></div>
         <div class="kv"><span>Followers needed</span><span>${need(b)}</span></div>
         <div class="kv"><span>Where</span><span>${esc(b.city)}</span></div>
+        ${S.bstats[b.brand_id]?`<div class="kv"><span>Brand’s record</span><span>Has paid ${S.bstats[b.brand_id]} creator${S.bstats[b.brand_id]>1?'s':''} on Boli</span></div>`:''}
         <div class="kv"><span>Open until</span><span>${left(daysLeft(b))}</span></div>
         ${action}
       </div>
@@ -401,12 +417,12 @@ function vWork(){
   </div>`; }
 
 function appRow(a){
-  const c = a.profiles || {}, s = a.status, v = url(a.video_link), soc = url(c.social);
+  const c = a.profiles || {}, s = a.status, v = url(a.video_link), L = a.links || {}, soc = url(L.social), sm = url(L.sample_link);
   const lab = {applied:'Applied', accepted:'Accepted, now shooting', declined:'Declined', sent:'Video received', approved:'Approved, payment due', paid:'Paid'}[s];
   const btn = (st, t, on) => `<button class="pill" data-act="status" data-v="${a.id}" data-s="${st}"${on?' aria-pressed="true"':''}>${t}</button>`;
   const acts = s==='applied' ? btn('accepted','Accept',1)+btn('declined','Decline') : s==='sent' ? btn('approved','Approve video',1)+btn('accepted','Ask for changes') : s==='approved' ? btn('paid','Mark as paid',1) : '';
-  return `<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b><br><span class="meta">${esc(c.city||'')} · ${num(c.followers)} followers · ${lab}</span></div>
-    ${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${v&&s!=='applied'?`<a class="pill" href="${esc(v)}" target="_blank" rel="noopener">Watch video</a>`:''}${acts}<button class="pill" data-act="thread" data-v="${a.id}">Messages</button></div>`; }
+  return `<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b><br><span class="meta">${esc(c.city||'')} · ${num(c.followers)} followers · ${rec(c.id)} · ${lab}</span></div>
+    ${sm?`<a class="pill" href="${esc(sm)}" target="_blank" rel="noopener">Sample video</a>`:''}${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${v&&s!=='applied'?`<a class="pill" href="${esc(v)}" target="_blank" rel="noopener">Watch video</a>`:''}${acts}<button class="pill" data-act="thread" data-v="${a.id}">Messages</button></div>`; }
 
 function vDash(){
   const t = S.tpl;
@@ -434,6 +450,7 @@ function vDash(){
     <div class="two"><label for="fChT">Challenge sales target (₹)<input id="fChT" type="number" min="0" step="500" value="5000"></label><label for="fChB">Challenge bonus (₹)<input id="fChB" type="number" min="0" step="100" value="1000"></label></div>`:''}
     <p class="meta" id="fErr" hidden>Describe what the video should show.</p>
     <button class="btn accent wide" type="submit">Post brief</button>
+    <p class="meta">Free while in-app payments are being set up. After that, Boli adds a ${FEE.payg}% fee on each deal, or ${FEE.sub}% on the subscription plan.</p>
   </form></div>
   <div class="sec"><h2>Your briefs</h2>
   ${S.mine.map(b=>{ const apps=b.applications||[]; return `<div class="panel"><div class="row"><b>${esc(b.title)}</b><b>${payLabel(b)}</b></div><div class="row"><span class="meta">${b.status==='open'?left(daysLeft(b))+' · ':''}${apps.length} applicant${apps.length===1?'':'s'}</span>${b.status==='open'?`<button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`:'<span class="tag">Closed</span>'}</div>${apps.map(appRow).join('')}</div>`; }).join('') || '<p class="meta">Briefs you post appear here with everyone who applies.</p>'}
@@ -442,28 +459,34 @@ function vDash(){
 function clist(){
   const F = S.flt;
   return S.creators.filter(c=>(!F.ccat||(c.cats||[]).includes(F.ccat)) && (!F.ccity||c.city===F.ccity) && (!F.clang||(c.langs||[]).includes(F.clang)) && c.followers>=+F.cfol)
-    .sort((x,y)=> F.csort==='new' ? new Date(y.created_at)-new Date(x.created_at) : y.followers-x.followers);
+    .sort((x,y)=> F.csort==='new' ? new Date(y.created_at)-new Date(x.created_at) : F.csort==='done' ? ((S.stats[y.id]||{}).done||0)-((S.stats[x.id]||{}).done||0) : y.followers-x.followers);
 }
 function vFind(){
   const list = clist();
   return `<div class="sec"><span class="eyebrow">Find creators</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Creators on Boli</h1>
   ${fbar('c')}
-  <p class="meta">${list.length} creator${list.length===1?'':'s'}. Follower counts are entered by creators; open their page to check.</p>
-  <div>${list.map(c=>{ const soc=url(c.social), sm=url(c.sample_link); return `<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b><br><span class="meta">${esc(c.city||'')} · ${(c.cats||[]).map(k=>CATS[k]||k).join(', ')} · ${num(c.followers)} followers · ${(c.langs||[]).join(', ')}${c.rate?' · usually '+rs(c.rate):''}</span></div>${soc?`<a class="pill" href="${esc(soc)}" target="_blank" rel="noopener">Their page</a>`:''}${sm?`<a class="pill" href="${esc(sm)}" target="_blank" rel="noopener">Sample video</a>`:''}</div>`; }).join('') || '<p class="meta">No creators match yet.</p>'}</div>
-  <p class="meta">To work with a creator, post a brief. Creators who fit will apply, and you can message them from there.</p></div>`; }
+  <p class="meta">${list.length} creator${list.length===1?'':'s'}. Follower counts are entered by creators and can be checked once you accept an applicant.</p>
+  <div>${list.map(c=>`<div class="person t-${hue((c.cats||[])[0])}" style="flex-wrap:wrap"><span class="av">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b><br><span class="meta">${esc(c.city||'')} · ${(c.cats||[]).map(k=>CATS[k]||k).join(', ')} · ${num(c.followers)} followers · ${(c.langs||[]).join(', ')}${c.rate?' · usually '+rs(c.rate):''}</span><br><span class="meta">${rec(c.id)}</span></div></div>`).join('') || '<p class="meta">No creators match yet.</p>'}</div>
+  <p class="meta">To work with a creator, post a brief. When they apply you see their sample video, and their page link is shared once you accept them.</p></div>`; }
 
 function vAccount(){
   const m = S.me;
   return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%"><span class="eyebrow">${m.role==='creator'?'Creator account':'Brand account'}</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${esc(m.name)}</h1>
     <div class="panel"><div class="kv"><span>Email</span><span>${esc(S.user.email||'')}</span></div><div class="kv"><span>City</span><span>${esc(m.city||'')}</span></div>
-    ${m.role==='creator'?`<div class="kv"><span>Languages</span><span>${(m.langs||[]).join(', ')}</span></div><div class="kv"><span>You make</span><span>${(m.cats||[]).map(k=>CATS[k]||k).join(', ')}</span></div><div class="kv"><span>Followers</span><span>${num(m.followers)}</span></div>`:`<div class="kv"><span>Category</span><span>${CATS[(m.cats||[])[0]]||''}</span></div>`}
-    <button class="btn wide" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost wide" data-act="signout">Sign out</button></div></div>`; }
+    ${m.role==='creator'?`<div class="kv"><span>Languages</span><span>${(m.langs||[]).join(', ')}</span></div><div class="kv"><span>You make</span><span>${(m.cats||[]).map(k=>CATS[k]||k).join(', ')}</span></div><div class="kv"><span>Followers</span><span>${num(m.followers)}</span></div><div class="kv"><span>Track record</span><span>${rec(m.id)}</span></div>`:`<div class="kv"><span>Category</span><span>${CATS[(m.cats||[])[0]]||''}</span></div>`}
+    <button class="btn wide" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost wide" data-act="signout">Sign out</button></div>
+    ${m.role==='brand'?`<h2>Your plan</h2>
+    <div class="lv${m.plan==='payg'?' on':''}"><span><b>Pay per deal</b><br><span class="meta">No monthly charge</span></span><span style="text-align:right"><b>${FEE.payg}%</b><br><span class="meta">fee on each deal</span></span></div>
+    <div class="lv${m.plan==='sub'?' on':''}"><span><b>Subscription</b><br><span class="meta">${rs(FEE.subPrice)} a month</span></span><span style="text-align:right"><b>${FEE.sub}%</b><br><span class="meta">fee on each deal</span></span></div>
+    <p class="meta">Boli is free to use while in-app payments are being set up. Fees begin once payments run through Boli, and are always shown before you confirm a deal. The subscription suits brands running several deals a month.</p>
+    ${m.plan==='sub'?'':m.plan_requested_at?'<p><span class="tag ok">Subscription requested</span> We will contact you when billing opens.</p>':'<div><button class="btn" data-act="planReq">Ask for the subscription plan</button></div>'}`:''}</div>`; }
 
 function vThread(){
   const f = findApp(S.arg); if(!f) return `<p class="meta">This conversation is not available.</p>`;
   return `<div class="sec" style="max-width:640px;margin:0 auto;width:100%"><button class="link" data-act="${isBrand()?'nav':'brief'}" data-v="${isBrand()?'dash':f.b.id}">‹ Back</button>
     <span class="eyebrow">${esc(f.b.title)}</span><h2>Messages with ${esc(f.other)}</h2>
     <div class="panel">${S.msgs.map(m=>`<div style="align-self:${m.sender_id===S.user.id?'flex-end':'flex-start'};max-width:85%"><p class="hook" style="${m.sender_id===S.user.id?'background:var(--accent-soft)':''}">${esc(m.body)}</p><span class="meta" style="font-size:.74rem">${new Date(m.created_at).toLocaleString('en-IN',{day:'numeric',month:'short',hour:'numeric',minute:'2-digit'})}</span></div>`).join('') || '<p class="meta">No messages yet. Say hello and agree the details here.</p>'}
+    <p class="meta">${['approved','paid'].includes(f.a.status)?'The video is approved, so you can now share payment details here.':'Phone numbers, emails, links and social handles are hidden in messages until the video is approved.'}</p>
     <form id="msgForm" class="row" novalidate><input id="mBody" maxlength="1000" placeholder="Write a message" aria-label="Message"><button class="btn accent" type="submit">Send</button></form></div></div>`; }
 
 /* ---------- render ---------- */
@@ -502,6 +525,7 @@ document.addEventListener('click', e=>{
   if(a==='signout') return run(async()=>{ await sb.auth.signOut(); S.user=null; await loadAll(); go('home'); toast('Signed out'); });
   if(a==='apply') return run(async()=>{ await q(sb.from('applications').insert({brief_id:v, creator_id:S.user.id})); await loadAll(); render(); toast('Applied. You will hear back here.'); });
   if(a==='status') return run(async()=>{ const s=el.dataset.s; await q(sb.from('applications').update({status:s}).eq('id',v)); await loadAll(); render(); toast({accepted:'Creator accepted',declined:'Application declined',approved:'Video approved',paid:'Marked as paid'}[s]||'Updated'); });
+  if(a==='planReq') return run(async()=>{ await q(sb.from('profiles').update({plan_requested_at:new Date().toISOString()}).eq('id',S.user.id)); await loadAll(); render(); toast('Request sent'); });
   if(a==='closeBrief') return run(async()=>{ await q(sb.from('briefs').update({status:'closed'}).eq('id',v)); await loadAll(); render(); toast('Brief closed'); });
   if(a==='thread') return run(async()=>{ S.msgs = await q(sb.from('messages').select('*').eq('application_id',v).order('created_at')); go('thread', v); });
   const y = window.scrollY;
@@ -522,6 +546,7 @@ document.addEventListener('submit', e=>{
   if(id==='authForm') return run(async()=>{
     const email=$('aEmail').value.trim(), password=$('aPass').value;
     if(!/^\S+@\S+\.\S+$/.test(email) || password.length<8) return showErr('aErr','Enter a valid email and a password of at least 8 characters.');
+    if(S.authMode==='up' && !$('aTerms').checked) return showErr('aErr','Please agree to the Boli terms to continue.');
     $('aBtn').disabled = true;
     const r = S.authMode==='up' ? await sb.auth.signUp({email,password}) : await sb.auth.signInWithPassword({email,password});
     $('aBtn').disabled = false;
@@ -546,8 +571,8 @@ document.addEventListener('submit', e=>{
       const site=$('pSite').value.trim(); if(site&&!url(site)) return showErr('pErr','The link should start with https://');
       row = {...row, cats:[$('pCat').value], site:site||null};
     }
-    const isNew = !S.me;
-    await q(sb.from('profiles').upsert(row));
+    const isNew = !S.me; if(isNew) row.terms_at = new Date().toISOString();
+    if(isNew) await q(sb.from('profiles').insert(row)); else { const {id:_i, role:_r, ...patch} = row; await q(sb.from('profiles').update(patch).eq('id', S.user.id)); }
     await loadAll(); toast(isNew?'Welcome to Boli':'Profile saved');
     isNew ? afterLogin() : go('account');
   });
