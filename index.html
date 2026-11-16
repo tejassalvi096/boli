@@ -252,6 +252,8 @@ const num = n => Number(n||0).toLocaleString('en-IN');
 const ini = s => String(s||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();
 const url = u => /^https?:\/\//i.test(u||'') ? u : '';
 const cleanLocal = v => { const t = String(v==null?'':v).trim(); return !t || /^(no|none|nope|nil|na|n\/a|not applicable|yes|-+|\.+)$/i.test(t) ? null : t; };
+const IG_RE = /^https:\/\/(www\.)?instagram\.com\/(?!(p|reel|reels|stories|explore|tv)\/?$)[A-Za-z0-9._]{1,30}\/?$/i;
+const igUrl = v => { let t = String(v||'').trim(); if(!t) return ''; t = t.replace(/[?#].*$/, ''); if(/^@?[A-Za-z0-9._]{1,30}$/.test(t)) return 'https://instagram.com/' + t.replace(/^@/, ''); t = t.replace(/^(https?:\/\/)?(m\.)?/i, 'https://').replace(/^https:\/\/(?=instagram\.com)/i, 'https://'); if(!/^https:\/\//i.test(t)) t = 'https://' + t; return t.replace(/\/+$/, ''); };
 const fixUrl = u => { u = String(u||'').trim(); return !u ? '' : /^https?:\/\//i.test(u) ? u : /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(u) ? 'https://'+u : u; };
 const same = (a,b) => String(a)===String(b);
 const daysLeft = b => Math.max(0, Math.floor((new Date(b.closes_on+'T23:59:59') - Date.now())/864e5));
@@ -405,7 +407,7 @@ function soonHTML(){
 function readyHTML(){
   const m = S.me || {}, kit = !!(S.cap && S.cap.kit);
   const items = [[true, 'Profile created', ''],
-    [!!(m.social || m.sample_link), 'Page link or sample video added', 'profile'],
+    [!!m.social && (m.followers||0) >= 1000, 'Instagram profile and 1,000+ followers added', 'profile'],
     ...(kit ? [[(S.samples||[]).length>0, 'At least one work sample added', 'account'], [!!m.public_on, 'Public profile switched on', 'account']] : [])];
   const left = items.filter(i=>!i[0]).length;
   return `<div class="panel" id="readyPanel"><b>Get ready</b><p class="meta">${left ? 'Finish these so brands see a complete profile on launch day.' : 'You are all set. We will email you when briefs open.'}</p>${items.map(([done, t, to])=>`<div class="row" style="flex-wrap:wrap;gap:6px 12px"><span><span class="tag${done?' ok':''}">${done?'Done':'To do'}</span> ${t}</span>${!done&&to?`<button class="pill" data-act="nav" data-v="${to}">${to==='profile'?'Edit profile':'Open account'}</button>`:''}</div>`).join('')}</div>`;
@@ -425,13 +427,14 @@ async function copyLink(link){
 async function loadSamples(){ try{ const r = await sb.from('samples').select('*').eq('creator_id',S.user.id).order('created_at',{ascending:false}); S.samples = r.error ? [] : (r.data||[]); }catch(e){ S.samples = []; } }
 /* Public creators on the home page: shown to visitors and brands, loaded once after the first paint. */
 let pubLoading = false;
-function pubHTML(){
+function pubHTML(){ if(S.workOpen===false) return '';
   const list = S.pubCreators || [];
   if(!S.cap.kit || isCreator() || !list.length) return '';
   return `<section class="sec" id="creators"><div class="row" style="flex-wrap:wrap"><h2>Creators on Boli</h2>${isBrand()?'<button class="pill" data-act="nav" data-v="find">See all creators</button>':''}</div>
     <div class="pubgrid">${list.map(c=>`<button class="person pubc t-${hue((c.cats||[])[0])}" data-act="kit" data-v="${esc(c.handle||c.id)}"><span class="av">${esc(ini(c.name))}</span><span class="pubt"><b>${esc(c.name)}</b>${vtag(c)}<br><span class="meta">${esc([c.city, c.area].filter(Boolean).join(' · '))}</span>${c.local_focus?`<br><span class="tag">Local page: ${esc(c.local_focus)}</span>`:''}<br><span class="meta">${esc((c.cats||[]).map(k=>CATS[k]||k).join(', '))}${(c.cats||[]).length?' · ':''}${num(c.followers)} followers${c.done>0?' · '+num(c.done)+' deal'+(c.done>1?'s':'')+' on Boli':''}</span></span></button>`).join('')}</div></section>`;
 }
 function loadPub(){
+  if(S.workOpen===false) return;
   if(pubLoading || S.pubCreators!==null || !S.cap.kit) return;
   pubLoading = true;
   Promise.resolve().then(()=>sb.rpc('public_creators', {p_limit:12})).then(r=>{ S.pubCreators = r && !r.error && Array.isArray(r.data) ? r.data : []; }, ()=>{ S.pubCreators = []; })
@@ -481,10 +484,10 @@ function vProfile(){
       <b>Languages you create in</b>${chipsPick('lang', LANGS.map(l=>[l,l]), m.langs||['Marathi'])}
       <b>What you make</b>${chipsPick('cat', Object.entries(CATS), m.cats||[])}
       <b>Deals you are open to</b>${chipsPick('deal', DEAL_TYPES, m.deals||DEAL_TYPES.map(x=>x[0]))}
-      <label for="pSocial">Instagram or YouTube link<input id="pSocial" value="${esc(m.social)}" placeholder="https://instagram.com/yourname"></label>
-      <p class="meta">Kept private. A brand sees this link only after it accepts your application.</p>
-      <label for="pFol">Followers on that account<input id="pFol" type="number" min="0" step="1" value="${m.followers||0}"></label>
-      <p class="meta">Enter 0 if you have no account and want content-only work. Brands can check your page, so keep this accurate. You can change this once; after that only every 30 days.</p>
+      <label for="pSocial">Instagram profile link<input id="pSocial" value="${esc(m.social)}" placeholder="instagram.com/yourname or @yourname" autocapitalize="off"></label>
+      <p class="meta">Required. Kept private: a brand sees it only after it accepts your application.</p>
+      <label for="pFol">Instagram followers<input id="pFol" type="number" min="1000" step="1" value="${m.followers||''}" placeholder="At least 1,000"></label>
+      <p class="meta">Boli is for creators with at least 1,000 followers. Brands check your page, so keep this accurate. You can change it once; after that only every 30 days.</p>
       <label for="pSample">Link to a sample video<input id="pSample" value="${esc(m.sample_link)}" placeholder="https://"></label>
       <p class="meta">${S.cap.profiles?'Brands see this on your profile.':'Shown only to brands whose briefs you apply to.'} Add your page link, a sample video, or both.</p>
       <label for="pRate">Your usual rate per video in ₹ (optional)<input id="pRate" type="number" min="0" step="100" value="${m.rate||''}" placeholder="e.g. 1500"></label>
@@ -972,9 +975,11 @@ document.addEventListener('submit', e=>{
       const langs=picked('lang'), cats=picked('cat');
       if(!langs.length || !cats.length) return showErr('pErr','Pick at least one language and one thing you make.');
       if(!S.me && !$('pAge').checked) return showErr('pErr','You need to be 18 or older to join.');
-      const social=fixUrl($('pSocial').value), sample=fixUrl($('pSample').value);
-      if((social&&!url(social)) || (sample&&!url(sample))) return showErr('pErr','Check the links: they should look like instagram.com/yourname');
-      if(!social && !sample) return showErr('pErr','Add your page link or a sample video so brands can see your work.');
+      const social=igUrl($('pSocial').value), sample=fixUrl($('pSample').value), folN=parseInt($('pFol').value)||0;
+      if(!social) return showErr('pErr','Add your Instagram profile link, like instagram.com/yourname.');
+      if(!IG_RE.test(social)) return showErr('pErr','That does not look like an Instagram profile. Use instagram.com/yourname, not a post or reel link.');
+      if(folN < 1000) return showErr('pErr','Boli is for creators with at least 1,000 Instagram followers.');
+      if(sample&&!url(sample)) return showErr('pErr','Check the sample video link.');
       row = {...row, langs, cats, deals:picked('deal'), social:social||null, followers:Math.max(0,parseInt($('pFol').value)||0), sample_link:sample||null, rate:parseInt($('pRate').value)||null};
       if(S.cap.profiles) row = {...row, bio:fval('pBio',300), area:fval('pArea',60), local_focus:cleanLocal(fval('pLocal',60))};
     } else {
