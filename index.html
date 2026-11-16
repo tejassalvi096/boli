@@ -251,6 +251,7 @@ const rs = n => '₹' + Number(n||0).toLocaleString('en-IN');
 const num = n => Number(n||0).toLocaleString('en-IN');
 const ini = s => String(s||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();
 const url = u => /^https?:\/\//i.test(u||'') ? u : '';
+const cleanLocal = v => { const t = String(v==null?'':v).trim(); return !t || /^(no|none|nope|nil|na|n\/a|not applicable|yes|-+|\.+)$/i.test(t) ? null : t; };
 const fixUrl = u => { u = String(u||'').trim(); return !u ? '' : /^https?:\/\//i.test(u) ? u : /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(u) ? 'https://'+u : u; };
 const same = (a,b) => String(a)===String(b);
 const daysLeft = b => Math.max(0, Math.floor((new Date(b.closes_on+'T23:59:59') - Date.now())/864e5));
@@ -474,8 +475,8 @@ function vProfile(){
       <label for="pCity">City or district<select id="pCity">${opts(CITIES.map(c=>[c,c]), cityIn ? (m.city||'Mumbai') : 'Other')}</select></label>
       <label for="pCityOther" id="pCityOtherWrap"${cityIn && m.city!=='Other' ? ' hidden' : ''}>Your city or town<input id="pCityOther" maxlength="60" value="${esc(cityIn ? '' : m.city)}" placeholder="e.g. Panchgani"></label>
       ${S.cap.profiles?`<label for="pArea">Area or locality (optional)<input id="pArea" maxlength="60" value="${esc(m.area)}" placeholder="e.g. Andheri East"></label>
-      <label for="pLocal">Is your page about one place? (optional)<input id="pLocal" maxlength="60" value="${esc(m.local_focus)}" placeholder="e.g. Andheri, Panchgani"></label>
-      <p class="meta">For pages that cover one town, suburb or area. Brands looking for local reach can find you by it.</p>
+      <label for="pLocal">Place your page covers (optional)<input id="pLocal" maxlength="60" value="${esc(m.local_focus)}" placeholder="e.g. Andheri, Panchgani"></label>
+      <p class="meta">Only for pages about one town, suburb or area: type its name. Leave this empty otherwise.</p>
       <label for="pBio">Short bio (optional)<textarea id="pBio" rows="3" maxlength="300" placeholder="What you make and who watches it">${esc(m.bio)}</textarea></label>`:''}
       <b>Languages you create in</b>${chipsPick('lang', LANGS.map(l=>[l,l]), m.langs||['Marathi'])}
       <b>What you make</b>${chipsPick('cat', Object.entries(CATS), m.cats||[])}
@@ -756,7 +757,8 @@ function vThread(){
 
 /* ---------- render ---------- */
 function nav(){
-  const items = !S.user || !S.me ? [['home','Briefs']] : isCreator() ? [['home','Briefs'],['work','My work'],['account','Account']] : [['dash','Dashboard'],['find','Creators'],['home','Briefs'],['account','Account']];
+  const hl = S.workOpen===false ? 'Home' : 'Briefs';
+  const items = !S.user || !S.me ? [['home',hl]] : isCreator() ? [['home',hl],['work','My work'],['account','Account']] : [['dash','Dashboard'],['find','Creators'],['home','Briefs'],['account','Account']];
   if(S.me && S.me.is_admin) items.push(['admin','Boli team']);
   const cur = S.view==='creator' ? 'find' : S.view==='edit' ? 'dash' : S.view;
   const html = items.map(([v,t])=>`<button class="nv" data-act="nav" data-v="${v}"${cur===v?' aria-current="page"':''}>${t}</button>`).join('');
@@ -974,7 +976,7 @@ document.addEventListener('submit', e=>{
       if((social&&!url(social)) || (sample&&!url(sample))) return showErr('pErr','Check the links: they should look like instagram.com/yourname');
       if(!social && !sample) return showErr('pErr','Add your page link or a sample video so brands can see your work.');
       row = {...row, langs, cats, deals:picked('deal'), social:social||null, followers:Math.max(0,parseInt($('pFol').value)||0), sample_link:sample||null, rate:parseInt($('pRate').value)||null};
-      if(S.cap.profiles) row = {...row, bio:fval('pBio',300), area:fval('pArea',60), local_focus:fval('pLocal',60)};
+      if(S.cap.profiles) row = {...row, bio:fval('pBio',300), area:fval('pArea',60), local_focus:cleanLocal(fval('pLocal',60))};
     } else {
       const site=fixUrl($('pSite').value); if(site&&!url(site)) return showErr('pErr','Check the link: it should look like yourbrand.in or instagram.com/yourbrand');
       row = {...row, cats:[$('pCat').value], site:site||null};
