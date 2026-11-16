@@ -274,6 +274,13 @@ function toast(msg){ const t=$('toast'); t.textContent=msg; t.hidden=false; clea
 async function q(p){ const {data,error} = await p; if(error) throw new Error(error.message); return data; }
 /* Looks once at which newer database pieces exist, so the app works before and after a database update without a new deploy. */
 const capOk = (r, table) => { const e = r && r.error; if(!e) return true; const c = String(e.code||''), m = String(e.message||''); if(c==='42501') return true; return !(c==='42703' || c==='42P01' || c==='PGRST205' || c==='PGRST204' || c==='' || /does not exist|could not find|failed to fetch|network/i.test(m)); };
+S.workOpen = true; S.hasSettings = false;
+async function loadWork(){
+  try{ const r = await sb.from('settings').select('value').eq('key','work_open').maybeSingle();
+    S.hasSettings = !r.error;
+    S.workOpen = (r.error || !r.data) ? true : !(r.data.value===false || r.data.value==='false'); }
+  catch(e){ S.workOpen = true; S.hasSettings = false; }
+}
 async function probeCaps(){
   const safe = p => p.then(r=>r, ()=>({error:{code:'', message:'failed to fetch'}}));
   const [p, b, i, k] = await Promise.all([safe(sb.from('profiles').select('bio').limit(1)), safe(sb.from('briefs').select('lang').limit(1)), safe(sb.from('invites').select('id').limit(1)), safe(sb.from('profiles').select('handle').limit(1))]);
@@ -293,8 +300,8 @@ async function doLoad0(){
   const [briefsR, bstatsR, meR] = await Promise.all([
     q(sb.from('briefs').select('*').eq('status','open').order('created_at',{ascending:false})),
     q(sb.rpc('brand_stats')),
-    uid ? q(sb.from('profiles').select(PSEL).eq('id',uid).maybeSingle()) : null]);
-  const N = {briefs: briefsR.filter(b=>!expired(b)), bstats:{}, me: meR||null, apps:[], mine:[], creators:[], stats:{}, del:{}, alerts:true, alertsOk:false, invites:[], samples:[]};
+    uid ? q(sb.from('profiles').select(PSEL).eq('id',uid).maybeSingle()) : null, loadWork()]);
+  const N = {briefs: briefsR.filter(b=>!expired(b) && !b.draft), bstats:{}, me: meR||null, apps:[], mine:[], creators:[], stats:{}, del:{}, alerts:true, alertsOk:false, invites:[], samples:[]};
   bstatsR.forEach(r=>{ N.bstats[r.brand_id]=r.paid; });
   if(N.me){
     const creator = N.me.role==='creator';
@@ -366,10 +373,10 @@ function vHome(){
   return `
   ${S.user?'':`<section class="hero">
     <div class="sec">
-      <span class="eyebrow">Now open in Marathi and Hindi</span>
+      <span class="eyebrow">${S.workOpen?'Now open in Marathi and Hindi':'Early access for creators'}</span>
       <h1>Where brands and creators find each other.</h1>
-      <p>Brands post what they need and choose who fits. Creators browse brands and apply. In regional languages, starting with Marathi and Hindi.</p>
-      <div class="cta"><button class="btn accent" data-act="join" data-v="creator">I’m a creator</button><button class="btn ghost" data-act="join" data-v="brand">I’m a brand</button></div>
+      <p>${S.workOpen?'Brands post what they need and choose who fits. Creators browse brands and apply. In regional languages, starting with Marathi and Hindi.':'Create your profile now. Brands start posting work soon, and creators who join early are seen first.'}</p>
+      <div class="cta"><button class="btn accent" data-act="join" data-v="creator">${S.workOpen?'I’m a creator':'Join as a creator'}</button><button class="btn ghost" data-act="join" data-v="brand">I’m a brand</button></div>
     </div>
     ${fan.length?`<div class="fan">${fan.map(b=>cover(b,'div')).join('')}</div>`:''}
   </section>
@@ -378,19 +385,30 @@ function vHome(){
     <div class="panel"><span class="eyebrow">If you are a creator</span><ol class="steps"><li>Create your account.</li><li>Add your city, languages and what you make.</li><li>Browse brands and apply to the briefs you like.</li><li>Once a brand accepts you, shoot and send your video.</li><li>The brand approves it and pays you.</li></ol><div><button class="btn accent" data-act="join" data-v="creator">Start as a creator</button></div></div>
     <div class="panel"><span class="eyebrow">If you are a brand</span><ol class="steps"><li>Create your brand account.</li><li>Choose what you want, and what the creator gets: payment, product or both.</li><li>Post a brief with the follower range you want.</li><li>Review applicants, or browse creators yourself.</li><li>Approve the videos you like and pay the creator.</li></ol><div><button class="btn" data-act="join" data-v="brand">Start as a brand</button></div></div>
   </div></section>`}
-  <section class="sec" id="briefs">
+  ${!S.workOpen ? soonHTML() : `<section class="sec" id="briefs">
     ${invPanel()}
     <div class="row" style="flex-wrap:wrap"><h2>Brands looking for creators</h2><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Search by product, brand or place" aria-label="Search briefs"></div>
     <div class="chips"><button class="pill" data-act="cat" data-v="" aria-pressed="${!S.cat}">All</button>${Object.entries(CATS).map(([k,v])=>`<button class="pill" data-act="cat" data-v="${k}" aria-pressed="${S.cat===k}">${v}</button>`).join('')}</div>
     ${fbar('b')}
     <div class="grid" id="grid">${gridHTML()}</div>
-  </section>
+  </section>`}
   <div id="pubSec">${pubHTML()}</div>
   <section class="course">
     <div class="sec"><span class="eyebrow">Creator course</span><h2>Never made a video? A course is on the way.</h2><p>Short lessons that take you from picking your topic to your first paid brief. Coming soon.</p></div>
   </section>
   ${footHTML()}`; }
 
+function soonHTML(){
+  return `<section class="sec" id="briefs"><div class="panel" id="soonPanel"><h2>Work opens soon</h2><p class="meta">Brands are getting set up. We will email you the day briefs open.</p></div>${isCreator()?readyHTML():''}</section>`;
+}
+function readyHTML(){
+  const m = S.me || {}, kit = !!(S.cap && S.cap.kit);
+  const items = [[true, 'Profile created', ''],
+    [!!(m.social || m.sample_link), 'Page link or sample video added', 'profile'],
+    ...(kit ? [[(S.samples||[]).length>0, 'At least one work sample added', 'account'], [!!m.public_on, 'Public profile switched on', 'account']] : [])];
+  const left = items.filter(i=>!i[0]).length;
+  return `<div class="panel" id="readyPanel"><b>Get ready</b><p class="meta">${left ? 'Finish these so brands see a complete profile on launch day.' : 'You are all set. We will email you when briefs open.'}</p>${items.map(([done, t, to])=>`<div class="row" style="flex-wrap:wrap;gap:6px 12px"><span><span class="tag${done?' ok':''}">${done?'Done':'To do'}</span> ${t}</span>${!done&&to?`<button class="pill" data-act="nav" data-v="${to}">${to==='profile'?'Edit profile':'Open account'}</button>`:''}</div>`).join('')}</div>`;
+}
 function invPanel(){
   if(!isCreator()) return '';
   const list = (S.invites||[]).map(i=>S.briefs.find(b=>b.id===i.brief_id)).filter(b=>b && !myApp(b.id));
@@ -489,8 +507,9 @@ function vBrief(){
   const a = myApp(b.id), s = a && a.status, aff = b.type==='affiliate', L = b.levels, shut = closedB(b);
   let action;
   if(shut && !s && !(isBrand() && b.brand_id===S.user.id)) action = `<p><span class="tag">Closed</span> <b>This brief has closed.</b></p><p class="meta">It is no longer taking applications.</p><button class="btn wide" data-act="home">Browse open briefs</button>`;
-  else if(!S.user) action = `<button class="btn accent wide" data-act="join" data-v="creator">Create an account to apply</button>`;
+  else if(!S.user) action = S.workOpen ? `<button class="btn accent wide" data-act="join" data-v="creator">Create an account to apply</button>` : `<p class="meta">Applications open on launch day.</p><button class="btn accent wide" data-act="join" data-v="creator">Join as a creator</button>`;
   else if(isBrand()) action = b.brand_id===S.user.id ? `<button class="btn wide" data-act="nav" data-v="dash">Manage this brief</button>` : `<p class="meta">You are signed in as a brand. Only creators can apply to briefs.</p>`;
+  else if(!s && !S.workOpen) action = `<p class="meta">Applications open on launch day.</p>`;
   else if(!s) action = ok(b) ? `<button class="btn accent wide" data-act="apply" data-v="${b.id}">${aff?'Ask to join this programme':'Apply for this brief'}</button>` : `<button class="btn wide" disabled>Needs ${need(b)}. You have ${num(S.me.followers)}.</button>`;
   else if(s==='declined') action = `<p class="meta">The brand chose other creators for this brief.</p>`;
   else action = track(s, b) + (typeof dealNotes==='function' ? dealNotes(a, b) : '') + (s==='applied' ? `<p class="meta">${b.status==='closed'?'The brand has now filled or closed this brief. You will see it here if that changes.':'Sent. You will see it here when the brand responds.'}</p>`
@@ -557,6 +576,7 @@ function vDash(){
   const t = S.tpl, comm = t==='affiliate' || t==='full';
   return `<div class="split">
   <div class="sec"><span class="eyebrow">${esc(S.me.name)}</span><h1 style="font-size:clamp(1.8rem,5vw,2.6rem)">Post a brief</h1>
+  ${S.workOpen?'':'<div class="lock" id="preBanner"><b>Boli opens for work soon.</b><span class="meta">Briefs you write now are saved as drafts and go live on launch day.</span></div>'}
   <form id="briefForm" class="panel" novalidate>
     <b>What does the creator get?</b>
     <div class="chips" style="flex-wrap:wrap;overflow:visible">${Object.entries(TPL).filter(([k])=>COMM_ON || (k!=='affiliate' && k!=='full')).map(([k,v])=>`<button type="button" class="pill" data-act="tpl" data-v="${k}" aria-pressed="${t===k}">${v}</button>`).join('')}</div>
@@ -583,14 +603,14 @@ function vDash(){
     ${t==='full'?`<div class="two"><label for="fUp">Sales to reach next level (₹)<input id="fUp" type="number" min="500" step="500" value="2500"></label><label for="fRet">Top-level monthly retainer (₹)<input id="fRet" type="number" min="0" step="500" value="3000"></label></div>
     <div class="two"><label for="fChT">Challenge sales target (₹)<input id="fChT" type="number" min="0" step="500" value="5000"></label><label for="fChB">Challenge bonus (₹)<input id="fChB" type="number" min="0" step="100" value="1000"></label></div>`:''}
     <p class="meta" id="fErr" hidden>${S.cap.briefs?'Add a title for the brief.':'Describe what the video should show.'}</p>
-    <button class="btn accent wide" type="submit">Post brief</button>
+    <button class="btn accent wide" type="submit">${S.workOpen?'Post brief':'Save as draft'}</button>
     <p class="meta">Free while in-app payments are being set up. After that, Boli adds a ${FEE.payg}% fee on each paid deal, or ${FEE.sub}% on the subscription plan.</p>
   </form></div>
   <div class="sec"><h2>Your briefs</h2>
   ${S.mine.map(b=>{ const apps=b.applications||[], sel=apps.filter(a=>ACTIVE.includes(a.status)).length, exp=b.status==='open'&&expired(b);
     return `<div class="panel"><div class="row"><b>${esc(b.title)}</b><b>${payLabel(b)}</b></div>
-      <div class="row" style="flex-wrap:wrap;gap:6px 14px"><span class="meta">${b.status!=='open'?'':exp?'':left(daysLeft(b))+' · '}${apps.length} applicant${apps.length===1?'':'s'} · ${sel} of ${num(b.creators_needed||1)} creator${(b.creators_needed||1)>1?'s':''} selected</span>
-      <span class="row" style="gap:12px;flex-wrap:wrap"><button class="link" data-act="editBrief" data-v="${b.id}">Edit</button>${b.status!=='open' ? `<span class="tag">Closed</span><button class="link" data-act="reopenBrief" data-v="${b.id}">Reopen</button>` : exp ? `<span class="tag">Expired</span><button class="link" data-act="extendBrief" data-v="${b.id}">Extend 14 days</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>` : `<button class="link" data-act="share" data-v="${b.id}">Share</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`}</span></div>
+      <div class="row" style="flex-wrap:wrap;gap:6px 14px"><span class="meta">${b.draft?'Goes live on launch day · ':b.status!=='open'?'':exp?'':left(daysLeft(b))+' · '}${apps.length} applicant${apps.length===1?'':'s'} · ${sel} of ${num(b.creators_needed||1)} creator${(b.creators_needed||1)>1?'s':''} selected</span>
+      <span class="row" style="gap:12px;flex-wrap:wrap"><button class="link" data-act="editBrief" data-v="${b.id}">Edit</button>${b.draft ? `<span class="tag">Draft</span>` : b.status!=='open' ? `<span class="tag">Closed</span>${S.workOpen?`<button class="link" data-act="reopenBrief" data-v="${b.id}">Reopen</button>`:''}` : exp ? `<span class="tag">Expired</span><button class="link" data-act="extendBrief" data-v="${b.id}">Extend 14 days</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>` : `<button class="link" data-act="share" data-v="${b.id}">Share</button><button class="link" data-act="closeBrief" data-v="${b.id}">Close brief</button>`}</span></div>
       ${apps.map(a=>appRow(a,b)).join('')}</div>`; }).join('') || '<p class="meta">Briefs you post appear here with everyone who applies.</p>'}
   </div></div>`; }
 
@@ -1022,7 +1042,7 @@ document.addEventListener('submit', e=>{
       }
     }
     if(S.cap.briefs) Object.assign(nb, briefExtraVals('f'));
-    await q(sb.from('briefs').insert(nb)); S.fa=''; $('fAsk').value=''; S.bfClear=true; await loadAll(); render(); toast('Brief posted. Creators can see it now.');
+    await q(sb.from('briefs').insert(nb)); S.fa=''; $('fAsk').value=''; S.bfClear=true; await loadAll(); render(); toast(S.workOpen ? 'Brief posted. Creators can see it now.' : 'Saved as a draft');
   });
 });
 
@@ -1036,7 +1056,7 @@ function afterLogin(){
 (async function start(){
   try{
     /* getSession resolves only after supabase-js has read any sign-in tokens from the address, so the hash is left alone until then. */
-    const [{data:{session}}] = await Promise.all([sb.auth.getSession(), probeCaps()]); S.user = session ? session.user : null;
+    const [{data:{session}}] = await Promise.all([sb.auth.getSession(), probeCaps(), loadWork()]); S.user = session ? session.user : null;
     await loadAll();
   }catch(e){ $('view').innerHTML = '<p class="meta">Boli could not load. Check your connection and refresh the page.</p>'; return; }
   routeReady = true;
@@ -1164,7 +1184,7 @@ function tDealBar(t){
   } else {
     if(s==='applied'){
       const full = ((S.mine.find(x=>x.id===b.id)||{}).applications||[]).filter(x=>['accepted','sent','approved','paid'].includes(x.status)).length >= (b.creators_needed||1);
-      h = `<p class="meta">This creator has applied to your brief.</p><div class="th-tools">${full?'<span class="tag">Brief is full</span>':btn('accepted','Accept',1)}${btn('declined','Decline')}</div>`;
+      h = `<p class="meta">${S.workOpen?'This creator has applied to your brief.':'You can accept creators once Boli opens for work.'}</p><div class="th-tools">${full?'<span class="tag">Brief is full</span>':S.workOpen?btn('accepted','Accept',1):''}${btn('declined','Decline')}</div>`;
     }
     else if(s==='accepted') h = `<p class="meta">${a.change_note?'You asked for changes: '+esc(a.change_note):'Waiting for the creator to send the video.'}</p>`;
     else if(s==='sent'){
@@ -1224,7 +1244,7 @@ function appRow(a, b){
   const btn = (st, t, on) => `<button class="pill" data-act="t-status" data-v="${esc(a.id)}" data-s="${st}"${on?' aria-pressed="true"':''}>${t}</button>`;
   const chgOpen = s==='sent' && same(S.tChg, a.id);
   const full = (b.applications||[]).filter(x=>['accepted','sent','approved','paid'].includes(x.status)).length >= (b.creators_needed||1);
-  const acts = s==='applied' ? (full ? '<span class="tag">Brief is full</span>' : btn('accepted','Accept',1))+btn('declined','Decline')
+  const acts = s==='applied' ? (full ? '<span class="tag">Brief is full</span>' : S.workOpen ? btn('accepted','Accept',1) : '')+btn('declined','Decline')
     : s==='sent' ? btn('approved','Approve video',1)+`<button class="pill" data-act="t-changes" data-v="${esc(a.id)}" aria-expanded="${chgOpen}">Ask for changes</button>`
     : s==='approved' ? btn('paid', done?'Mark as completed':'Mark as paid', 1) : '';
   const live = ['accepted','sent','approved','paid'].includes(s);
@@ -1370,10 +1390,11 @@ function adReasons(d){
 }
 
 async function adLoad(){
-  const [users, deals, briefs] = await Promise.all([q(sb.rpc('admin_users')), q(sb.rpc('admin_deals')), q(sb.rpc('admin_briefs'))]);
+  const [users, deals, briefs, lc] = await Promise.all([q(sb.rpc('admin_users')), q(sb.rpc('admin_deals')), q(sb.rpc('admin_briefs')),
+    sb.rpc('launch_counts').then(r=>r.error?null:r.data, ()=>null), loadWork()]);
   const old = S.adm || {};
   S.adm = {tab:old.tab||'attn', dstat:old.dstat||'', pf:old.pf||'all', pq:old.pq||'', confirm:null, fol:null,
-    users:users||[], deals:deals||[], briefs:briefs||[], loadedAt:new Date()};
+    users:users||[], deals:deals||[], briefs:briefs||[], launch:lc||null, lconf:null, loadedAt:new Date()};
 }
 async function openAdmin(){
   if(!(S.me && S.me.is_admin)) return go('home');
@@ -1383,6 +1404,16 @@ async function openAdmin(){
 }
 async function adReload(msg){ await adLoad(); render(); if(msg) toast(msg); }
 
+function adLaunch(){
+  const A = S.adm; if(!A || !S.hasSettings) return '';
+  const open = S.workOpen!==false, c = A.launch || null, n = v => num(v||0);
+  const tiles = c ? [[c.creators,'Creators'],[c.creators_with_sample,'With a sample or page link'],[c.creators_public,'Public profiles'],[c.creators_verified,'Verified'],[c.brands,'Brands'],[c.draft_briefs,'Draft briefs']] : [];
+  const acts = A.lconf ? `<span class="meta">${A.lconf==='open'?'Open Boli for work? Draft briefs go live and creators can apply.':'Close for work? New briefs become drafts and nobody can apply, invite or accept.'}</span><button class="btn accent" data-act="ad-launch-yes">${A.lconf==='open'?'Yes, open now':'Yes, close'}</button><button class="pill" data-act="ad-launch-no">Cancel</button>`
+    : open ? `<button class="pill" data-act="ad-launch" data-v="close">Close for work</button>` : `<button class="btn accent" data-act="ad-launch" data-v="open">Open Boli for work</button>`;
+  return `<div class="panel" id="adLaunch"><div class="row" style="flex-wrap:wrap;gap:6px 12px"><b>Launch</b><span class="tag${open?' ok':''}">${open?'Open for work':'Closed for work — sign-ups only'}</span></div>
+    ${tiles.length?`<div class="ad-tiles">${tiles.map(([v,t])=>`<div class="ad-tile"><b>${n(v)}</b><span>${t}</span></div>`).join('')}</div>`:''}
+    <div class="ad-acts" style="flex-wrap:wrap">${acts}</div></div>`;
+}
 function adDealRow(d, reasons){
   return `<div class="ad-row">
     <div><b>${esc(d.brand_name)} ↔ ${esc(d.creator_name)}</b><br><span class="meta">${esc(d.brief_title)}</span></div>
@@ -1470,6 +1501,7 @@ function vAdmin(){
     <div class="ad-top"><div><span class="eyebrow">Boli team</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Overview</h1></div>
       <div class="ad-acts"><span class="meta">${A.loadedAt?'Updated '+adTime(A.loadedAt):''}</span><button class="pill" data-act="ad-refresh">Refresh</button></div></div>
     ${A.err?`<p class="meta">Could not load the latest data: ${esc(A.err)}</p>`:''}
+    ${adLaunch()}
     <div class="ad-tiles">${tiles.map(([n,t,w])=>`<div class="ad-tile${w&&n?' warn':''}"><b>${num(n)}</b><span>${t}</span></div>`).join('')}</div>
     <div class="chips" style="flex-wrap:wrap;overflow:visible" role="tablist" aria-label="Boli team sections">${AD_TABS.map(([k,t])=>`<button class="pill" role="tab" data-act="ad-tab" data-v="${k}" aria-selected="${A.tab===k}" aria-pressed="${A.tab===k}">${t}${k==='attn'&&attn?' · '+attn:''}</button>`).join('')}</div>
     ${body}
@@ -1480,6 +1512,15 @@ document.addEventListener('click', e=>{
   const el = e.target.closest('[data-act^="ad-"]'); if(!el || el.disabled || !S.adm) return;
   const a = el.dataset.act, v = el.dataset.v, A = S.adm;
   const keep = fn => { const y = window.scrollY; fn(); render(); window.scrollTo(0, y); };
+  if(a==='ad-launch') return keep(()=>{ A.lconf = v==='open' ? 'open' : 'close'; });
+  if(a==='ad-launch-no') return keep(()=>{ A.lconf = null; });
+  if(a==='ad-launch-yes') return run(async()=>{
+    const want = A.lconf==='open'; el.disabled = true;
+    const r = await q(sb.rpc('admin_set_work_open', {p_open: want}));
+    S.workOpen = want; A.lconf = null;
+    const n = r && r.published!=null ? Number(r.published) : 0;
+    await loadAll(); await adReload(want ? 'Boli is open. '+n+' draft brief'+(n===1?' is':'s are')+' now live.' : 'Boli is closed for work.');
+  });
   if(a==='ad-tab') return keep(()=>{ A.tab = v; A.confirm = null; A.fol = null; });
   if(a==='ad-dstat') return keep(()=>{ A.dstat = v; });
   if(a==='ad-pf') return keep(()=>{ A.pf = v; A.confirm = null; A.fol = null; });
@@ -1526,7 +1567,7 @@ document.addEventListener('keydown', e=>{ if(e.key==='Enter' && e.target.id==='a
 <script>
 /* ---------- Find creators, creator profile, invites (part_find) ---------- */
 function fcState(){ if(!S.fc) S.fc = {q:'', local:false}; return S.fc; }
-function fInvOn(){ return !(S.cap && S.cap.invites===false); }
+function fInvOn(){ return S.workOpen!==false && !(S.cap && S.cap.invites===false); }
 function fInvites(){ return Array.isArray(S.invites) ? S.invites : []; }
 function fPlace(c){ return [c.city, c.area].map(x=>String(x||'').trim()).filter(Boolean).join(' · '); }
 function fOpenBriefs(){ return (S.mine||[]).filter(b=>b.status==='open' && !expired(b)); }
@@ -1849,7 +1890,7 @@ function vCreator(){
   if(!k) return `<div class="sec k-wrap">${back}<p class="meta">This creator’s profile is not available.</p></div>`;
   return `<div class="sec k-wrap f-prof">${back}${kitHTML(k, {viewer:admin?'admin':'brand'})}
     <div class="k-bar">${k.public_on ? '<button class="btn ghost" data-act="k-share">Share this profile</button>' : ''}<span class="meta">Their page link is shared with you once you accept their application.</span></div>
-    ${kInviteHTML(k)}</div>`;
+    ${kInviteHTML(k)}${isBrand() && S.workOpen===false ? '<p class="meta" id="invSoon">You can invite creators once Boli opens for work.</p>' : ''}</div>`;
 }
 async function openCreator(id){
   const admin = !!(S.me && S.me.is_admin);
