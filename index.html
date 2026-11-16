@@ -184,6 +184,9 @@ body.busy::before{content:'';position:fixed;top:0;left:0;height:3px;width:40%;ba
 @keyframes boliBar{0%{left:-40%}100%{left:100%}}
 @media (prefers-reduced-motion:reduce){body.busy::before{animation:none;width:100%}}
 #langs[hidden],#pCityOtherWrap[hidden]{display:none}
+.pubgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0 24px}
+.pubc{width:100%;background:none;border:0;border-bottom:1px solid var(--line);text-align:left;align-items:flex-start}
+.pubc .pubt{flex:1;min-width:0;overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -233,11 +236,14 @@ const PCOLS = 'id,role,name,city,langs,cats,deals,followers,rate,site,created_at
 const PX = PCOLS + ',bio,area,local_focus';
 /* PSEL is the profile column list in use: PX once the newer profile columns exist in the database, PCOLS until then. */
 let PSEL = PCOLS;
+/* Extra profile columns for the public creator profile; added to PSEL only once the database has them. */
+const PK = ',handle,public_on,show_rate';
+const HANDLE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const SUPPORT_EMAIL = '';
 const TERMS = ['Deals that start on Boli are agreed, delivered and paid through Boli.','Keep all conversation about a deal inside Boli messages. Phone numbers, emails, links and social handles are hidden in messages.','Give accurate details about yourself, your followers and your brand.','Creators own their videos until the brand pays for them. Paid posts carry the paid partnership label.','Boli may charge brands a service fee on each deal. The fee is always shown before a deal is confirmed.','The Boli team can read deal messages and may step in to help or to resolve a dispute.','Taking a deal that started on Boli off the platform can get your account suspended.','Accounts that break these terms can be suspended or removed.'];
-const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms','forgot','reset','creator','edit'];
+const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms','forgot','reset','creator','edit','c'];
 const ACTIVE = ['accepted','sent','approved','paid'];
-const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}, authNote:'', alerts:true, alertsOk:false, pwOpen:false, resendEmail:'', resendUntil:0, forgotSent:'', lang:'', invites:[], cap:{profiles:false, briefs:false, invites:false}};
+const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}, authNote:'', alerts:true, alertsOk:false, pwOpen:false, resendEmail:'', resendUntil:0, forgotSent:'', lang:'', invites:[], cap:{profiles:false, briefs:false, invites:false, kit:false}, samples:[], pubCreators:null, pendC:null};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -270,9 +276,9 @@ async function q(p){ const {data,error} = await p; if(error) throw new Error(err
 const capOk = (r, table) => { const e = r && r.error; if(!e) return true; const c = String(e.code||''), m = String(e.message||''); if(c==='42501') return true; return !(c==='42703' || c==='42P01' || c==='PGRST205' || c==='PGRST204' || c==='' || /does not exist|could not find|failed to fetch|network/i.test(m)); };
 async function probeCaps(){
   const safe = p => p.then(r=>r, ()=>({error:{code:'', message:'failed to fetch'}}));
-  const [p, b, i] = await Promise.all([safe(sb.from('profiles').select('bio').limit(1)), safe(sb.from('briefs').select('lang').limit(1)), safe(sb.from('invites').select('id').limit(1))]);
-  S.cap = {profiles: capOk(p), briefs: capOk(b), invites: capOk(i)};
-  PSEL = S.cap.profiles ? PX : PCOLS;
+  const [p, b, i, k] = await Promise.all([safe(sb.from('profiles').select('bio').limit(1)), safe(sb.from('briefs').select('lang').limit(1)), safe(sb.from('invites').select('id').limit(1)), safe(sb.from('profiles').select('handle').limit(1))]);
+  S.cap = {profiles: capOk(p), briefs: capOk(b), invites: capOk(i), kit: capOk(k)};
+  PSEL = (S.cap.profiles ? PX : PCOLS) + (S.cap.kit ? PK : '');
 }
 const invitedTo = id => !!(isCreator() && (S.invites||[]).some(i=>i.brief_id===id));
 const fval = (id, max) => { const e = $(id); const v = e ? String(e.value||'').trim() : ''; return v ? v.slice(0, max||1500) : null; };
@@ -280,7 +286,7 @@ let loadChain = Promise.resolve();
 function loadAll(){ const p = loadChain.catch(()=>{}).then(doLoad); loadChain = p; return p; }
 async function doLoad(){
   try{ return await doLoad0(); }
-  catch(e){ if(PSEL!==PCOLS && /does not exist|42703/i.test(String(e && e.message))){ PSEL = PCOLS; S.cap.profiles = false; return await doLoad0(); } throw e; }
+  catch(e){ if(PSEL!==PCOLS && /does not exist|42703/i.test(String(e && e.message))){ PSEL = PCOLS; S.cap.profiles = false; S.cap.kit = false; return await doLoad0(); } throw e; }
 }
 async function doLoad0(){
   const uid = S.user ? S.user.id : null;
@@ -288,21 +294,23 @@ async function doLoad0(){
     q(sb.from('briefs').select('*').eq('status','open').order('created_at',{ascending:false})),
     q(sb.rpc('brand_stats')),
     uid ? q(sb.from('profiles').select(PSEL).eq('id',uid).maybeSingle()) : null]);
-  const N = {briefs: briefsR.filter(b=>!expired(b)), bstats:{}, me: meR||null, apps:[], mine:[], creators:[], stats:{}, del:{}, alerts:true, alertsOk:false, invites:[]};
+  const N = {briefs: briefsR.filter(b=>!expired(b)), bstats:{}, me: meR||null, apps:[], mine:[], creators:[], stats:{}, del:{}, alerts:true, alertsOk:false, invites:[], samples:[]};
   bstatsR.forEach(r=>{ N.bstats[r.brand_id]=r.paid; });
   if(N.me){
     const creator = N.me.role==='creator';
-    const [al, cs, dl, iv, x1, x2, x3] = await Promise.all([
+    const [al, cs, dl, iv, sm, x1, x2, x3] = await Promise.all([
       sb.from('profiles').select('email_alerts').eq('id',uid).maybeSingle().then(r=>r, ()=>({error:true})),
       q(sb.rpc('creator_stats')),
       q(sb.from('deliveries').select('*')),
       S.cap.invites ? sb.from('invites').select('*').then(r=>r.error ? [] : (r.data||[]), ()=>[]) : [],
+      S.cap.kit && creator ? sb.from('samples').select('*').eq('creator_id',uid).order('created_at',{ascending:false}).then(r=>r.error ? [] : (r.data||[]), ()=>[]) : [],
       ...(creator ? [q(sb.rpc('my_links')), q(sb.from('applications').select('*, briefs(*)').eq('creator_id',uid).order('created_at',{ascending:false}))]
         : [q(sb.from('briefs').select('*, applications(*, profiles('+PSEL+'))').eq('brand_id',uid).order('created_at',{ascending:false})), q(sb.rpc('applicant_links')), q(sb.from('profiles').select(PSEL).eq('role','creator').order('followers',{ascending:false}))])]);
     if(al && !al.error && al.data){ N.alertsOk = true; N.alerts = al.data.email_alerts!==false; }
     cs.forEach(r=>{ N.stats[r.creator_id]=r; });
     dl.forEach(d=>{ N.del[d.application_id]=d; });
     N.invites = Array.isArray(iv) ? iv : [];
+    N.samples = Array.isArray(sm) ? sm : [];
     if(creator){ const l = x1[0] || {}; N.me.social = l.social; N.me.sample_link = l.sample_link; N.apps = x2; }
     else { const links = {}; x2.forEach(r=>{ links[r.application_id]=r; }); N.mine = x1; N.mine.forEach(b=>(b.applications||[]).forEach(a=>{ a.links = links[a.id]||{}; })); N.creators = x3; }
   }
@@ -377,6 +385,7 @@ function vHome(){
     ${fbar('b')}
     <div class="grid" id="grid">${gridHTML()}</div>
   </section>
+  <div id="pubSec">${pubHTML()}</div>
   <section class="course">
     <div class="sec"><span class="eyebrow">Creator course</span><h2>Never made a video? A course is on the way.</h2><p>Short lessons that take you from picking your topic to your first paid brief. Coming soon.</p></div>
   </section>
@@ -387,6 +396,27 @@ function invPanel(){
   const list = (S.invites||[]).map(i=>S.briefs.find(b=>b.id===i.brief_id)).filter(b=>b && !myApp(b.id));
   if(!list.length) return '';
   return `<div class="panel" id="invPanel"><b>You have ${list.length} invitation${list.length>1?'s':''}</b><p class="meta">These brands asked you to look at their brief.</p>${list.map(b=>`<div class="row" style="flex-wrap:wrap;gap:6px 12px"><span><b>${esc(b.brand_name)}</b><br><span class="meta">${esc(b.title)} · ${payLabel(b)}</span></span><button class="pill" data-act="brief" data-v="${b.id}">Open brief</button></div>`).join('')}</div>`;
+}
+const kitKey = m => (m && (m.handle || m.id)) || '';
+const kitLink = m => location.origin + '/#/c/' + kitKey(m);
+async function copyLink(link){
+  try{ await navigator.clipboard.writeText(link); toast('Link copied'); }
+  catch(e){ const t = document.createElement('textarea'); t.value = link; t.setAttribute('readonly',''); t.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(t); t.select(); let done = false; try{ done = document.execCommand('copy'); }catch(_){} t.remove(); toast(done ? 'Link copied' : link); }
+}
+async function loadSamples(){ try{ const r = await sb.from('samples').select('*').eq('creator_id',S.user.id).order('created_at',{ascending:false}); S.samples = r.error ? [] : (r.data||[]); }catch(e){ S.samples = []; } }
+/* Public creators on the home page: shown to visitors and brands, loaded once after the first paint. */
+let pubLoading = false;
+function pubHTML(){
+  const list = S.pubCreators || [];
+  if(!S.cap.kit || isCreator() || !list.length) return '';
+  return `<section class="sec" id="creators"><div class="row" style="flex-wrap:wrap"><h2>Creators on Boli</h2>${isBrand()?'<button class="pill" data-act="nav" data-v="find">See all creators</button>':''}</div>
+    <div class="pubgrid">${list.map(c=>`<button class="person pubc t-${hue((c.cats||[])[0])}" data-act="kit" data-v="${esc(c.handle||c.id)}"><span class="av">${esc(ini(c.name))}</span><span class="pubt"><b>${esc(c.name)}</b>${vtag(c)}<br><span class="meta">${esc([c.city, c.area].filter(Boolean).join(' · '))}</span>${c.local_focus?`<br><span class="tag">Local page: ${esc(c.local_focus)}</span>`:''}<br><span class="meta">${esc((c.cats||[]).map(k=>CATS[k]||k).join(', '))}${(c.cats||[]).length?' · ':''}${num(c.followers)} followers${c.done>0?' · '+num(c.done)+' deal'+(c.done>1?'s':'')+' on Boli':''}</span></span></button>`).join('')}</div></section>`;
+}
+function loadPub(){
+  if(pubLoading || S.pubCreators!==null || !S.cap.kit) return;
+  pubLoading = true;
+  Promise.resolve().then(()=>sb.rpc('public_creators', {p_limit:12})).then(r=>{ S.pubCreators = r && !r.error && Array.isArray(r.data) ? r.data : []; }, ()=>{ S.pubCreators = []; })
+    .then(()=>{ pubLoading = false; const e = $('pubSec'); if(e) e.innerHTML = pubHTML(); });
 }
 function helpLine(){ return SUPPORT_EMAIL ? `Need help? Write to <a class="link" href="mailto:${esc(SUPPORT_EMAIL)}">${esc(SUPPORT_EMAIL)}</a>.` : 'Need help? Write to the Boli team from any deal’s messages.'; }
 function footHTML(){ return `<footer class="row" style="flex-wrap:wrap;gap:8px 16px;border-top:1px solid var(--line);padding-top:16px"><button class="link" data-act="nav" data-v="terms">Terms</button><span class="meta">${helpLine()}</span></footer>`; }
@@ -439,6 +469,7 @@ function vProfile(){
       <label for="pSample">Link to a sample video<input id="pSample" value="${esc(m.sample_link)}" placeholder="https://"></label>
       <p class="meta">${S.cap.profiles?'Brands see this on your profile.':'Shown only to brands whose briefs you apply to.'} Add your page link, a sample video, or both.</p>
       <label for="pRate">Your usual rate per video in ₹ (optional)<input id="pRate" type="number" min="0" step="100" value="${m.rate||''}" placeholder="e.g. 1500"></label>
+      ${isNew&&S.cap.kit?'<label for="pPublic" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="pPublic" type="checkbox" style="width:auto" checked> Give me a public profile link I can share</label>':''}
       ${isNew?'<label for="pAge" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="pAge" type="checkbox" style="width:auto"> I am 18 or older</label>':''}
       <p class="meta" id="pErr" hidden></p>
       <button class="btn accent wide" type="submit">${isNew?'Finish':'Save changes'}</button>
@@ -646,6 +677,35 @@ function showResend(email, wait){
   const box = $('aResend'); if(!box) return; box.hidden = false;
   clearInterval(resendTimer); resendTimer = setInterval(resendTick, 500); resendTick();
 }
+function kitPanels(){
+  const m = S.me; if(!m || m.role!=='creator' || !S.cap.kit) return '';
+  const on = !!m.public_on, showRate = m.show_rate!==false, list = S.samples||[];
+  const pills = (act, val) => `<div class="chips" style="flex-wrap:wrap;overflow:visible"><button type="button" class="pill" data-act="${act}" data-v="on" aria-pressed="${val}">On</button><button type="button" class="pill" data-act="${act}" data-v="off" aria-pressed="${!val}">Off</button></div>`;
+  return `<div class="panel" id="kitPanel"><b>Your public profile</b>
+      <p class="meta">Anyone with the link can see your niche, location, followers, samples and Boli track record. Your page link, email and phone are never shown.</p>
+      ${pills('kpub', on)}
+      ${on?'':'<p class="meta">Your link is off. Turn it on before you share it.</p>'}
+      <form id="kForm" class="sec" novalidate>
+        <label for="kHandle">Link name (optional)<input id="kHandle" maxlength="30" autocapitalize="none" autocomplete="off" spellcheck="false" value="${esc(m.handle||'')}" placeholder="e.g. panchgani-diaries"></label>
+        <p class="meta" id="kHint">Small letters, numbers and hyphens, 3 to 30 characters.</p>
+        <div><button class="btn" type="submit">Save link name</button></div>
+      </form>
+      <p class="meta" id="kLink" style="overflow-wrap:anywhere">${esc(kitLink(m))}</p>
+      <div class="cta"><button type="button" class="btn accent" data-act="kcopy">Copy link</button><button type="button" class="btn" data-act="kshare">Share</button><button type="button" class="btn ghost" data-act="kit" data-v="${esc(kitKey(m))}">View</button></div>
+      <b>Show my rate on it</b>${pills('krate', showRate)}
+    </div>
+    <div class="panel" id="samPanel"><b>Your work samples</b>
+      <p class="meta">Add reels or videos you are proud of. Views and likes are entered by you and shown as such.</p>
+      ${list.map((x,n)=>`<div class="row" style="flex-wrap:wrap;gap:6px 12px;align-items:flex-start"><span style="flex:1;min-width:0"><b>${esc(x.title||('Sample '+(n+1)))}</b><br><span class="meta" style="overflow-wrap:anywhere">${esc(x.url)}</span>${x.views!=null||x.likes!=null?`<br><span class="meta">${x.views!=null?num(x.views)+' views':''}${x.views!=null&&x.likes!=null?' · ':''}${x.likes!=null?num(x.likes)+' likes':''}</span>`:''}</span><button type="button" class="pill" data-act="sdel" data-v="${esc(x.id)}">Remove</button></div>`).join('') || '<p class="meta">No samples yet.</p>'}
+      ${list.length>=6?'<p class="meta">You have added 6 samples, the most a profile can hold. Remove one to add another.</p>':`<form id="sForm" class="sec" novalidate>
+        <label for="sUrl">Link to the reel or video<input id="sUrl" maxlength="300" placeholder="instagram.com/reel/…"></label>
+        <label for="sTitle">Title (optional)<input id="sTitle" maxlength="80" placeholder="e.g. Misal trail in Pune"></label>
+        <div class="two"><label for="sViews">Views (optional)<input id="sViews" type="number" min="0" step="1" inputmode="numeric"></label><label for="sLikes">Likes (optional)<input id="sLikes" type="number" min="0" step="1" inputmode="numeric"></label></div>
+        <p class="meta" id="sErr" hidden></p>
+        <div><button class="btn" type="submit">Add sample</button></div>
+      </form>`}
+    </div>`;
+}
 function vAccount(){
   const m = S.me;
   return `<div class="sec" style="max-width:560px;margin:0 auto;width:100%"><span class="eyebrow">${m.role==='creator'?'Creator account':'Brand account'}</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">${esc(m.name)}${vtag(m)}</h1>
@@ -653,6 +713,7 @@ function vAccount(){
     ${m.role==='creator'&&m.local_focus?`<div class="kv"><span>Local page</span><span>${esc(m.local_focus)}</span></div>`:''}
     ${m.role==='creator'?`<div class="kv"><span>Languages</span><span>${(m.langs||[]).join(', ')}</span></div><div class="kv"><span>You make</span><span>${(m.cats||[]).map(k=>CATS[k]||k).join(', ')}</span></div><div class="kv"><span>Followers</span><span>${num(m.followers)}</span></div><div class="kv"><span>Track record</span><span>${rec(m.id)}</span></div>`:`<div class="kv"><span>Category</span><span>${CATS[(m.cats||[])[0]]||''}</span></div>`}
     <button class="btn wide" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost wide" data-act="signout">Sign out</button></div>
+    ${kitPanels()}
     ${S.alertsOk?`<div class="panel"><b>Email alerts</b><p class="meta">We email you when something happens on your deals.</p><div class="chips" style="flex-wrap:wrap;overflow:visible"><button type="button" class="pill" data-act="alerts" data-v="on" aria-pressed="${S.alerts}">On</button><button type="button" class="pill" data-act="alerts" data-v="off" aria-pressed="${!S.alerts}">Off</button></div></div>`:''}
     <div class="panel"><b>Password</b>${S.pwOpen?`<form id="pwForm" class="sec" novalidate>
       <label for="cPass">New password<input id="cPass" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters"></label>
@@ -697,8 +758,8 @@ function fillForm(){
 function render(){
   keepForm();
   const fa=$('fAsk'); if(fa) S.fa=fa.value;
-  if(S.user && !S.me && S.view!=='profile' && S.view!=='terms' && S.view!=='reset') S.view='profile';
-  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, forgot:vForgot, reset:vReset, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome(), creator:()=>typeof vCreator==='function' ? vCreator() : vHome(), edit:vEdit};
+  if(S.user && !S.me && S.view!=='profile' && S.view!=='terms' && S.view!=='reset' && S.view!=='c') S.view='profile';
+  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, forgot:vForgot, reset:vReset, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome(), creator:()=>typeof vCreator==='function' ? vCreator() : vHome(), edit:vEdit, c:()=>typeof vKit==='function' ? vKit() : vHome()};
   const need_me = ['work','dash','find','account','thread','admin','creator','edit'];
   if(need_me.includes(S.view) && !S.me) S.view = 'home';
   if(S.view==='admin' && !(S.me && S.me.is_admin)) S.view = 'home';
@@ -706,6 +767,7 @@ function render(){
   $('view').innerHTML = ban + (V[S.view]||vHome)();
   fillForm();
   nav();
+  if(S.view==='home' && S.pubCreators===null && S.cap.kit && !isCreator()) loadPub();
 }
 
 /* ---------- routing: #/  #/brief/<id>  #/work  #/dash  #/find  #/account  #/profile  #/auth  #/thread/<id>  #/admin  #/terms ---------- */
@@ -729,7 +791,7 @@ async function route(){
     if(!ROUTES.includes(view)) to('home');
     if(view==='reset' && !S.user){ S.authMode = 'in'; S.authNote = 'Open the reset link from your email again, or ask for a new one below.'; to('auth'); }
     if(view==='forgot' && S.user) to(S.me ? (isBrand() ? 'dash' : 'home') : 'profile');
-    if(S.user && !S.me && view!=='profile' && view!=='terms' && view!=='reset') to('profile');
+    if(S.user && !S.me && view!=='profile' && view!=='terms' && view!=='reset' && view!=='c') to('profile');
     if(view==='profile' && !S.user) to('auth');
     if(view==='auth' && S.user) to(S.me ? (isBrand() ? 'dash' : 'home') : 'profile');
     if(['work','dash','find','account','thread','admin','creator','edit'].includes(view) && !S.me) to(S.user ? 'profile' : 'home');
@@ -751,6 +813,7 @@ async function route(){
     }
     if(view==='admin') return await openAdmin();
     if(view==='creator') return await openCreator(arg);
+    if(view==='c'){ if(arg && typeof openKit==='function') return await openKit(arg); to('home'); }
     if(view!=='auth') S.authNote = '';
     if(view!=='account') S.pwOpen = false;
     if(view!=='forgot') S.forgotSent = '';
@@ -764,7 +827,7 @@ async function shareBrief(id){
   catch(e){ const t = document.createElement('textarea'); t.value = link; t.setAttribute('readonly',''); t.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(t); t.select(); let done = false; try{ done = document.execCommand('copy'); }catch(_){} t.remove(); toast(done ? 'Link copied' : link); }
 }
 let busyN = 0;
-const niceErr = m => /invites_brief_id_creator_id_key/.test(m||'') ? 'You have already invited this creator.' : /row-level security/.test(m||'') ? 'That is not available right now. Refresh the page and try again.' : /violates check constraint/.test(m||'') ? 'One of the fields is too long or not valid. Please shorten it and try again.' : (m||'Something went wrong. Please try again.');
+const niceErr = m => /invites_brief_id_creator_id_key/.test(m||'') ? 'You have already invited this creator.' : /profiles_handle_lower_key/.test(m||'') ? 'That link name is not available.' : /row-level security/.test(m||'') ? 'That is not available right now. Refresh the page and try again.' : /violates check constraint/.test(m||'') ? 'One of the fields is too long or not valid. Please shorten it and try again.' : (m||'Something went wrong. Please try again.');
 async function run(fn){ busyN++; document.body.classList.add('busy'); try{ await fn(); }catch(e){ toast(niceErr(e.message)); } finally{ if(--busyN<=0){ busyN=0; document.body.classList.remove('busy'); } } }
 
 /* ---------- events ---------- */
@@ -777,6 +840,12 @@ document.addEventListener('click', e=>{
   if(a==='arole'){ S.authRole=el.dataset.k; el.parentElement.querySelectorAll('.pill').forEach(p=>p.setAttribute('aria-pressed', p===el)); return; }
   if(a==='home') return go('home');
   if(a==='share') return shareBrief(v);
+  if(a==='kit') return go('c', v);
+  if(a==='kcopy') return copyLink(kitLink(S.me));
+  if(a==='kshare'){ const link = kitLink(S.me); if(navigator.share) return navigator.share({title:'Boli', text:(S.me.name||'My profile')+' on Boli', url:link}).catch(e=>{ if(!e || e.name!=='AbortError') copyLink(link); }); return copyLink(link); }
+  if(a==='kpub') return run(async()=>{ const on = v==='on'; if(on===!!S.me.public_on) return; await q(sb.from('profiles').update({public_on:on}).eq('id',S.user.id)); S.me.public_on = on; render(); toast(on?'Your public profile is on':'Your public profile is off'); });
+  if(a==='krate') return run(async()=>{ const on = v==='on'; if(on===(S.me.show_rate!==false)) return; await q(sb.from('profiles').update({show_rate:on}).eq('id',S.user.id)); S.me.show_rate = on; render(); toast(on?'Your rate is shown':'Your rate is hidden'); });
+  if(a==='sdel') return run(async()=>{ const y = window.scrollY; await q(sb.from('samples').delete().eq('id', v)); await loadSamples(); render(); window.scrollTo(0,y); toast('Sample removed'); });
   if(a==='nav') return go(v);
   if(a==='brief') return go('brief', v);
   if(a==='auth'){ S.authMode=v; return go('auth'); }
@@ -813,6 +882,20 @@ document.addEventListener('click', e=>{
 });
 
 document.addEventListener('input', e=>{ if(e.target.id==='q'){ S.q=e.target.value; $('grid').innerHTML=gridHTML(); } });
+let kTimer = 0, kSeq = 0;
+const handleMsg = h => !h ? '' : h.length<3 ? 'Use at least 3 characters.' : h.length>30 ? 'Use 30 characters or fewer.' : !HANDLE_RE.test(h) ? 'Use small letters, numbers and single hyphens between them.' : '';
+document.addEventListener('input', e=>{
+  if(e.target.id!=='kHandle') return;
+  const el = e.target, low = el.value.toLowerCase().replace(/\s+/g,'-');
+  if(low!==el.value){ const p = el.selectionStart; el.value = low; try{ el.setSelectionRange(p,p); }catch(_){} }
+  const h = el.value.trim(), hint = $('kHint'), seq = ++kSeq; clearTimeout(kTimer);
+  if(!hint) return;
+  if(!h){ hint.textContent = 'Leave it empty to use your default link.'; return; }
+  const bad = handleMsg(h); if(bad){ hint.textContent = bad; return; }
+  if(h===(S.me && S.me.handle)){ hint.textContent = 'This is your current link name.'; return; }
+  hint.textContent = 'Checking…';
+  kTimer = setTimeout(()=>{ Promise.resolve().then(()=>sb.rpc('handle_free', {h})).then(r=>{ if(seq!==kSeq) return; const x = $('kHint'); if(x) x.textContent = r && !r.error ? (r.data ? 'Available' : 'Not available') : 'Could not check right now. You can still try to save.'; }, ()=>{ if(seq!==kSeq) return; const x = $('kHint'); if(x) x.textContent = 'Could not check right now. You can still try to save.'; }); }, 400);
+});
 document.addEventListener('change', e=>{ if(e.target.id==='pCity'){ const w=$('pCityOtherWrap'); if(w){ w.hidden = e.target.value!=='Other'; if(!w.hidden) $('pCityOther').focus(); } } });
 
 function showErr(id, msg){ const p=$(id); p.textContent=msg; p.hidden=false; }
@@ -827,7 +910,7 @@ document.addEventListener('submit', e=>{
     const r = S.authMode==='up' ? await sb.auth.signUp({email, password, options:{data:{role:S.authRole}, emailRedirectTo:location.origin}}) : await sb.auth.signInWithPassword({email,password});
     $('aBtn').disabled = false;
     if(r.error) return showErr('aErr', /already registered/i.test(r.error.message)?'That email already has an account. Sign in instead.':/invalid login/i.test(r.error.message)?'That email and password do not match.':/not confirmed/i.test(r.error.message)?(showResend(email, 0), 'Please open the confirmation link we emailed you, then sign in. If you cannot find it, send it again below.'):authMsg(r.error.message));
-    if(!r.data.session){ $('aConfirm').hidden=true; $('aBtn').hidden=true; showResend(email, 60); return showErr('aErr','We sent a confirmation link to '+email+'. Open it to finish creating your account. If it does not arrive in a few minutes, check your spam folder.'); }
+    if(!r.data.session){ if(S.pendC){ try{ localStorage.setItem('boli_pendC', S.pendC); }catch(_){} } $('aConfirm').hidden=true; $('aBtn').hidden=true; showResend(email, 60); return showErr('aErr','We sent a confirmation link to '+email+'. Open it to finish creating your account. If it does not arrive in a few minutes, check your spam folder.'); }
     S.authNote = '';
     S.user = r.data.user; await loadAll();
     if(!S.me) return go('profile');
@@ -877,9 +960,28 @@ document.addEventListener('submit', e=>{
       row = {...row, cats:[$('pCat').value], site:site||null};
     }
     const isNew = !S.me; if(isNew) row.terms_at = new Date().toISOString();
+    if(isNew && role==='creator' && S.cap.kit) row.public_on = !!($('pPublic') && $('pPublic').checked);
     if(isNew) await q(sb.from('profiles').insert(row)); else { const {id:_i, role:_r, ...patch} = row; await q(sb.from('profiles').update(patch).eq('id', S.user.id)); }
     await loadAll(); toast(isNew?'Welcome to Boli':'Profile saved');
     isNew ? afterLogin() : go('account');
+  });
+  if(id==='kForm') return run(async()=>{
+    const h = $('kHandle').value.trim().toLowerCase(), bad = handleMsg(h), hint = $('kHint');
+    if(bad){ if(hint) hint.textContent = bad; return; }
+    if((h||null)===(S.me.handle||null)) return toast('Link name saved');
+    kSeq++; clearTimeout(kTimer);
+    const r = await sb.from('profiles').update({handle: h||null}).eq('id', S.user.id);
+    if(r.error){ if(hint) hint.textContent = /not available|duplicate|unique/i.test(r.error.message) ? 'That link name is not available.' : niceErr(r.error.message); return; }
+    S.me.handle = h||null; render(); toast('Link name saved');
+  });
+  if(id==='sForm') return run(async()=>{
+    const link = fixUrl($('sUrl').value), n = x => { const v = String($(x).value||'').trim(); return v==='' ? null : Math.max(0, parseInt(v)||0); };
+    if(!url(link)) return showErr('sErr','Paste the link to your reel or video.');
+    if(link.length>300) return showErr('sErr','That link is too long.');
+    const y = window.scrollY;
+    const r = await sb.from('samples').insert({creator_id:S.user.id, url:link, title:fval('sTitle',80), views:n('sViews'), likes:n('sLikes')});
+    if(r.error) return showErr('sErr', niceErr(r.error.message));
+    await loadSamples(); render(); window.scrollTo(0,y); toast('Sample added');
   });
   if(id==='editForm') return run(async()=>{
     const bid = S.arg, title = $('eTitle').value.trim();
@@ -924,7 +1026,12 @@ document.addEventListener('submit', e=>{
   });
 });
 
-function afterLogin(){ const p=S.pend; S.pend=null; if(p && isCreator()) return go('brief', p); go(isBrand()?'dash':'home'); }
+function afterLogin(){
+  let c = S.pendC; S.pendC = null;
+  try{ if(!c) c = localStorage.getItem('boli_pendC'); localStorage.removeItem('boli_pendC'); }catch(_){}
+  if(c && isBrand()) return go('creator', c);
+  const p=S.pend; S.pend=null; if(p && isCreator()) return go('brief', p); go(isBrand()?'dash':'home');
+}
 
 (async function start(){
   try{
@@ -1507,6 +1614,242 @@ document.addEventListener('input', e=>{
   fcState().q = e.target.value;
   const box = $('fList'); if(box) box.innerHTML = fListHTML();
 });
+</script>
+
+<!-- part_kit -->
+<style>
+/* Creator report (public profile) */
+.k-wrap{max-width:980px;margin:0 auto;width:100%}
+.k-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.k-bar .btn{flex:none}
+.k-bar .meta{flex:1 1 220px;min-width:0}
+.k-rep{display:flex;flex-direction:column;gap:18px;min-width:0}
+.k-band{position:relative;border-radius:28px;padding:26px 22px;color:var(--cover-ink);background:linear-gradient(150deg,var(--hue),color-mix(in oklab,var(--hue) 40%,var(--cover-deep)));display:flex;flex-direction:column;gap:14px;overflow:hidden;min-width:0}
+.k-band::after{content:'';position:absolute;right:-70px;top:-90px;width:260px;height:260px;border-radius:50%;background:color-mix(in oklab,var(--cover-ink) 12%,transparent);pointer-events:none}
+.k-id{display:flex;align-items:center;gap:16px;min-width:0;position:relative;z-index:1}
+.k-av{flex:none;width:72px;height:72px;border-radius:50%;display:grid;place-items:center;font-family:var(--display);font-weight:800;font-size:1.5rem;background:color-mix(in oklab,var(--cover-ink) 20%,transparent);border:2px solid color-mix(in oklab,var(--cover-ink) 45%,transparent)}
+.k-id h1{font-size:clamp(1.7rem,5.4vw,2.6rem);line-height:1.05;overflow-wrap:anywhere;min-width:0;margin:0;color:inherit}
+.k-sub{font-size:.95rem;opacity:.92;overflow-wrap:anywhere}
+.k-chips{display:flex;flex-wrap:wrap;gap:6px;position:relative;z-index:1}
+.k-chip{font-size:.78rem;font-weight:600;padding:4px 11px;border-radius:999px;background:color-mix(in oklab,var(--cover-ink) 20%,transparent);white-space:nowrap}
+.k-chip.solid{background:var(--cover-ink);color:var(--cover-deep)}
+.k-bio{position:relative;z-index:1;margin:0;font-size:1.02rem;line-height:1.5;overflow-wrap:anywhere;max-width:62ch}
+.k-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.k-tile{background:var(--surface);border-radius:20px;padding:16px 18px;min-width:0;display:flex;flex-direction:column;gap:2px}
+.k-tile b{font-family:var(--display);font-weight:800;font-size:1.7rem;letter-spacing:-.03em;line-height:1.1;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.k-tile span{font-size:.84rem;color:var(--muted)}
+.k-tile small{font-size:.74rem;color:var(--muted)}
+.k-tile.wide{grid-column:1/-1}
+.k-tile.new b{font-size:1.25rem;color:var(--accent)}
+.k-sec{display:flex;flex-direction:column;gap:12px;min-width:0}
+.k-sec h2{font-size:1.25rem;margin:0}
+.k-samples{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.k-sample{background:var(--surface);border-radius:20px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.k-thumb,.k-fb{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:var(--chip)}
+.k-fb{display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:1.05rem;color:var(--cover-ink);background:linear-gradient(150deg,var(--hue),color-mix(in oklab,var(--hue) 40%,var(--cover-deep)))}
+.k-sbody{padding:14px 16px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.k-sbody b{overflow-wrap:anywhere}
+.k-nums{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.88rem;color:var(--muted)}
+.k-nums strong{color:var(--ink);font-variant-numeric:tabular-nums}
+.k-sbody a.pill{align-self:flex-start;text-decoration:none;color:inherit}
+.k-chart{background:var(--surface);border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.k-barrow{display:flex;flex-direction:column;gap:5px;min-width:0}
+.k-barrow .k-lab{display:flex;justify-content:space-between;gap:12px;font-size:.88rem;min-width:0}
+.k-barrow .k-lab span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.k-barrow .k-lab span:last-child{flex:none;font-weight:600;font-variant-numeric:tabular-nums}
+.k-track{height:10px;border-radius:999px;background:var(--chip);overflow:hidden}
+.k-fill{height:100%;border-radius:999px;background:var(--hue);min-width:4px}
+.k-open{display:flex;flex-wrap:wrap;gap:8px}
+.k-foot{text-align:center;padding:6px 0 2px}
+@media (min-width:700px){
+  .k-band{padding:34px 34px}
+  .k-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .k-samples{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (min-width:1000px){
+  .k-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .k-tile.wide{grid-column:span 2}
+}
+@media print{
+  header,.dock,.toast,.k-bar,.k-noprint,#fInv,#langs{display:none !important}
+  body{background:#fff !important}
+  .k-wrap{max-width:none}
+  .k-band,.k-fb,.k-fill,.k-chip{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .k-tile,.k-sample,.k-chart{border:1px solid #ddd;break-inside:avoid}
+  .k-sec{break-inside:avoid}
+}
+</style>
+<script>
+/* ---------- Creator report: public profile, in-app creator page (part_kit) ---------- */
+function kArr(x){ return Array.isArray(x) ? x : []; }
+function kStr(x){ return String(x==null ? '' : x).trim(); }
+function kInt(x){ const n = Number(x); return x!=null && x!=='' && isFinite(n) && n>=0 ? Math.round(n) : null; }
+function kObj(r){ let d = r && !r.error ? r.data : null; if(Array.isArray(d)) d = d[0]; return d && typeof d==='object' && d.id ? d : null; }
+function kKey(k){ return kStr(k.handle) || kStr(k.id); }
+function kLink(k){ return location.origin + '/#/c/' + encodeURIComponent(kKey(k)); }
+function kFirst(name){ return kStr(name).split(/\s+/)[0] || 'this creator'; }
+function kViewer(k){
+  if(!S.user || !S.me) return 'visitor';
+  if(k && S.me.id===k.id) return 'self';
+  if(isBrand()) return 'brand';
+  if(S.me.is_admin) return 'admin';
+  return 'creator';
+}
+function kPlatform(u){
+  let h = ''; try{ h = new URL(u).hostname.replace(/^www\./,'').toLowerCase(); }catch(e){}
+  return /(^|\.)instagram\.com$/.test(h) ? 'Instagram' : /(^|\.)(youtube\.com|youtu\.be)$/.test(h) ? 'YouTube' : /(^|\.)drive\.google\.com$/.test(h) ? 'Google Drive' : 'Video';
+}
+function kYtId(u){
+  try{
+    const x = new URL(u), h = x.hostname.replace(/^www\./,'').toLowerCase(); let id = '';
+    if(h==='youtu.be') id = x.pathname.split('/')[1] || '';
+    else if(/(^|\.)youtube\.com$/.test(h)){ if(x.pathname.startsWith('/shorts/')) id = x.pathname.split('/')[2] || ''; else if(x.pathname==='/watch') id = x.searchParams.get('v') || ''; }
+    return /^[A-Za-z0-9_-]{6,20}$/.test(id) ? id : '';
+  }catch(e){ return ''; }
+}
+function kSamples(k){
+  return kArr(k && k.samples).filter(s=>s && url(kStr(s.url)) && /^https?:\/\/[^\s"'<>`]+$/i.test(kStr(s.url))).slice(0, 6).map((s, i)=>({
+    url: kStr(s.url), title: kStr(s.title) || 'Sample ' + (i+1), views: kInt(s.views), likes: kInt(s.likes)}));
+}
+/* Builds a report object from a plain profile row, for when the public_profile function is not available. */
+function kFromProfile(c, sample){
+  const st = (S.stats || {})[c.id] || {};
+  return {id:c.id, handle:c.handle||null, name:c.name, city:c.city, area:c.area, local_focus:c.local_focus, langs:c.langs, cats:c.cats, deals:c.deals, bio:c.bio,
+    followers:c.followers, verified:!!c.verified, rate:c.rate||null, show_rate:true, public_on:!!c.public_on, created_at:c.created_at,
+    stats:{done:st.done||0, brands:st.brands||0, first_try:null, brand_cats:[]}, samples: url(sample) ? [{url:sample}] : []};
+}
+function kTile(big, label, small, cls){ return `<div class="k-tile${cls?' '+cls:''}"><b>${big}</b><span>${label}</span>${small?`<small>${small}</small>`:''}</div>`; }
+function kitHTML(k, opts){
+  if(!k || typeof k!=='object') return '';
+  const cats = kArr(k.cats), langs = kArr(k.langs), deals = kArr(k.deals), st = k.stats && typeof k.stats==='object' ? k.stats : {};
+  const place = [k.city, k.area].map(kStr).filter(Boolean).join(' · '), local = kStr(k.local_focus), bio = kStr(k.bio);
+  const done = kInt(st.done) || 0, brands = kInt(st.brands) || 0, first = kInt(st.first_try), rate = kInt(k.rate);
+  let since = ''; try{ const d = new Date(k.created_at); if(/^\d{4}-\d{2}-\d{2}/.test(kStr(k.created_at)) && !isNaN(d)) since = d.toLocaleDateString('en-IN', {month:'short', year:'numeric'}); }catch(e){}
+  const tiles = [kTile(num(kInt(k.followers) || 0), 'Followers', k.verified ? 'Verified by Boli' : 'Entered by the creator')];
+  if(done > 0){
+    tiles.push(kTile(num(done), done===1 ? 'Deal completed on Boli' : 'Deals completed on Boli'));
+    tiles.push(kTile(num(brands), brands===1 ? 'Brand worked with' : 'Brands worked with'));
+    if(first!=null) tiles.push(kTile(Math.min(100, Math.round(first/done*100)) + '%', 'Approved first time', 'Videos accepted without changes'));
+  } else tiles.push(kTile('New on Boli', 'No deals completed here yet', '', 'new'));
+  if(rate) tiles.push(kTile(rs(rate), 'Usual rate for a video'));
+  if(since) tiles.push(kTile(esc(since), 'Member since'));
+  const bcats = kArr(st.brand_cats).map(c=>CATS[c]).filter(Boolean);
+  const samples = kSamples(k), withViews = samples.filter(s=>s.views!=null), maxV = Math.max(1, ...withViews.map(s=>s.views));
+  const sampleCard = s => { const yt = kYtId(s.url), plat = kPlatform(s.url);
+    return `<div class="k-sample">${yt ? `<img class="k-thumb" data-kfb="${esc(plat)}" src="https://img.youtube.com/vi/${esc(yt)}/hqdefault.jpg" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="k-fb" aria-hidden="true">${esc(plat)}</div>`}
+      <div class="k-sbody"><b>${esc(s.title)}</b><span class="meta">${esc(plat)}</span>
+      ${s.views!=null || s.likes!=null ? `<div class="k-nums">${s.views!=null?`<span><strong>${num(s.views)}</strong> views</span>`:''}${s.likes!=null?`<span><strong>${num(s.likes)}</strong> likes</span>`:''}</div>`:''}
+      <a class="pill" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">Watch</a></div></div>`; };
+  return `<article class="k-rep t-${hue(cats[0])}">
+    <div class="k-band">
+      <div class="k-id"><span class="k-av" aria-hidden="true">${esc(ini(k.name))}</span><div style="min-width:0"><h1>${esc(k.name)}</h1>${place?`<div class="k-sub">${esc(place)}</div>`:''}</div></div>
+      <div class="k-chips">${k.verified?'<span class="k-chip solid">Verified</span>':''}${local?`<span class="k-chip solid">Local page: ${esc(local)}</span>`:''}${cats.map(c=>`<span class="k-chip">${esc(CATS[c]||c)}</span>`).join('')}${langs.map(l=>`<span class="k-chip">${esc(l)}</span>`).join('')}</div>
+      ${bio?`<p class="k-bio">${esc(bio)}</p>`:''}
+    </div>
+    <div class="k-tiles">${tiles.join('')}</div>
+    ${bcats.length?`<p class="meta">Has worked with brands in: ${esc(bcats.join(', '))}.</p>`:''}
+    <section class="k-sec"><h2>Work samples</h2>
+      ${samples.length ? `<div class="k-samples">${samples.map(sampleCard).join('')}</div>` : '<p class="meta">No samples added yet.</p>'}
+      ${withViews.length>=2 ? `<div class="k-chart"><b>Views on these samples</b>${withViews.map(s=>`<div class="k-barrow"><div class="k-lab"><span>${esc(s.title)}</span><span>${num(s.views)}</span></div><div class="k-track"><div class="k-fill" style="width:${Math.max(2, Math.round(s.views/maxV*100))}%"></div></div></div>`).join('')}<span class="meta">Views and likes are entered by the creator.</span></div>`
+        : (samples.some(s=>s.views!=null || s.likes!=null) ? '<p class="meta">Views and likes are entered by the creator.</p>' : '')}
+    </section>
+    ${deals.length?`<section class="k-sec"><h2>Open to</h2><div class="k-open">${deals.map(d=>`<span class="pill">${esc(TYPES[d]||d)}</span>`).join('')}</div></section>`:''}
+    <p class="meta k-foot">Profile on Boli · boli.ourdreamwork.com</p>
+  </article>`;
+}
+
+async function kShare(k){
+  const link = kLink(k);
+  if(navigator.share){ try{ await navigator.share({title:kStr(k.name) + ' on Boli', text:kStr(k.name) + ' is a creator on Boli.', url:link}); return; }catch(e){ if(e && e.name==='AbortError') return; } }
+  try{ await navigator.clipboard.writeText(link); toast('Link copied'); }
+  catch(e){ const t = document.createElement('textarea'); t.value = link; t.setAttribute('readonly',''); t.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(t); t.select(); let done = false; try{ done = document.execCommand('copy'); }catch(_){} t.remove(); toast(done ? 'Link copied' : link); }
+}
+
+async function openKit(key){
+  const st = S.kit = {key, k:null, loading:true, missing:false};
+  S.view = 'c'; S.arg = key; render(); window.scrollTo(0,0);
+  try{ st.k = kObj(await sb.rpc('public_profile', {p_key:String(key==null?'':key)})); }catch(e){ st.k = null; }
+  st.loading = false; st.missing = !st.k;
+  if(S.kit!==st || S.view!=='c') return;
+  render();
+}
+function vKit(){
+  const st = S.kit || {}, k = st.k, v = kViewer(k);
+  const adminBack = S.me && S.me.is_admin && !isBrand() ? '<button class="link" data-act="nav" data-v="admin">‹ Back to Boli team</button>' : '';
+  if(st.loading && !k) return `<div class="sec k-wrap">${adminBack}<p class="meta">Loading profile…</p></div>`;
+  if(!k) return `<div class="sec k-wrap">${adminBack}<div class="panel"><h3>This profile is not available</h3><p class="meta">The creator may have turned it off.</p><div><button class="btn" data-act="home">See briefs on Boli</button></div></div></div>`;
+  const share = '<button class="btn ghost" data-act="k-share">Share</button>';
+  const cta = v==='visitor' ? `<button class="btn accent" data-act="k-work">Work with ${esc(kFirst(k.name))} on Boli</button>${share}<span class="meta">Boli connects brands with regional creators. Posting a brief is free.</span>`
+    : v==='brand' ? `<button class="btn accent" data-act="k-invite">Invite to a brief</button>${share}`
+    : v==='self' ? `${share}<button class="btn ghost" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost" data-act="nav" data-v="account">Manage link</button><span class="meta">${k.public_on===false ? 'Your public profile is off, so only you and brands on Boli can see this.' : 'This is what people see when you share your link.'}</span>`
+    : share;
+  return `<div class="sec k-wrap">${adminBack}<div class="k-bar">${cta}</div>${kitHTML(k, {viewer:v})}</div>`;
+}
+
+/* In-app creator page for brands and the Boli team: the same report, then the invite section. */
+function kInviteHTML(c){
+  if(!c || !isBrand() || !fInvOn()) return '';
+  const open = fOpenBriefs();
+  return `<div class="panel" id="fInv"><h3>Invite to a brief</h3>${open.length ? open.map(b=>{
+      const s = fBriefState(b, c.id);
+      const right = s==='invite' ? `<button class="pill" data-act="f-invite" data-v="${esc(b.id)}" data-c="${esc(c.id)}" aria-pressed="true">Invite</button>`
+        : `<span class="tag${s==='full'?'':' ok'}">${{invited:'Invited', applied:'Already applied', full:'Brief is full'}[s]}</span>`;
+      return `<div class="f-inv"><span><b>${esc(b.title)}</b><br><span class="meta">${esc(payLabel(b))} · ${esc(TYPES[b.type]||'')}</span></span>${right}</div>`;
+    }).join('') + '<p class="meta">The creator gets an email and sees the invitation on Boli. They still choose whether to apply.</p>'
+    : `<p class="meta">Post a brief first, then invite creators to it.</p><div><button class="btn accent" data-act="nav" data-v="dash">Go to dashboard</button></div>`}</div>`;
+}
+function vCreator(){
+  const st = S.cr || {}, k = st.k, admin = !isBrand() && S.me && S.me.is_admin;
+  const back = `<button class="link k-noprint" data-act="nav" data-v="${admin?'admin':'find'}">‹ ${admin?'Back to Boli team':'All creators'}</button>`;
+  if(st.loading && !k) return `<div class="sec k-wrap">${back}<p class="meta">Loading profile…</p></div>`;
+  if(!k) return `<div class="sec k-wrap">${back}<p class="meta">This creator’s profile is not available.</p></div>`;
+  return `<div class="sec k-wrap f-prof">${back}${kitHTML(k, {viewer:admin?'admin':'brand'})}
+    <div class="k-bar">${k.public_on ? '<button class="btn ghost" data-act="k-share">Share this profile</button>' : ''}<span class="meta">Their page link is shared with you once you accept their application.</span></div>
+    ${kInviteHTML(k)}</div>`;
+}
+async function openCreator(id){
+  const admin = !!(S.me && S.me.is_admin);
+  if(!S.me || !(isBrand() || admin)) return go('home');
+  const prev = S.cr, c0 = (S.creators||[]).find(x=>x.id===id) || null;
+  const st = S.cr = {id, c:c0, k:c0 ? kFromProfile(c0, null) : null, loading:true, toInvite: !!(prev && prev.toInvite && prev.id===id)};
+  S.view = 'creator'; S.arg = id; render(); window.scrollTo(0,0);
+  try{
+    let k = null;
+    try{ k = kObj(await sb.rpc('public_profile', {p_key:String(id)})); }catch(e){ k = null; }
+    if(!k){
+      let c = st.c;
+      if(!c){
+        const cols = typeof PSEL!=='undefined' ? PSEL : PCOLS;
+        const p = await q(sb.from('profiles').select(cols).eq('id', id).maybeSingle());
+        c = p && p.role==='creator' ? p : null;
+      }
+      if(c){
+        let sample = null;
+        try{ const r = await sb.rpc('creator_card', {uid:id}); sample = !r.error && r.data && r.data[0] ? r.data[0].sample_link : null; }catch(e){}
+        k = kFromProfile(c, sample);
+      }
+    }
+    st.k = k;
+  }catch(e){ toast(e.message || 'Something went wrong. Please try again.'); }
+  st.loading = false;
+  if(S.cr!==st || S.view!=='creator') return;
+  render();
+  if(st.toInvite){ st.toInvite = false; const el = $('fInv'); if(el) el.scrollIntoView({block:'start'}); }
+}
+
+document.addEventListener('click', e=>{
+  const el = e.target.closest('[data-act^="k-"]'); if(!el || el.disabled) return;
+  const a = el.dataset.act, k = S.view==='creator' ? (S.cr||{}).k : (S.kit||{}).k; if(!k) return;
+  if(a==='k-share') return run(()=>kShare(k));
+  if(a==='k-invite') return go('creator', k.id);
+  if(a==='k-work'){ S.pendC = k.id; S.authRole = 'brand'; S.authMode = 'up'; return go('auth'); }
+});
+/* A thumbnail that fails to load is swapped for a plain labelled block. */
+document.addEventListener('error', e=>{
+  const img = e.target; if(!img || img.tagName!=='IMG' || !img.dataset || img.dataset.kfb==null) return;
+  const d = document.createElement('div'); d.className = 'k-fb'; d.setAttribute('aria-hidden','true'); d.textContent = img.dataset.kfb || 'Video';
+  img.replaceWith(d);
+}, true);
 </script>
 
 </body>
