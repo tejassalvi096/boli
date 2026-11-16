@@ -1144,6 +1144,41 @@ function tListHTML(){
   }).join('') || '<p class="meta">No messages yet. Say hello and agree the details here.</p>';
 }
 
+function tDealBar(t){
+  const a = t.a, b = t.b, s = a.status, mine = S.user && a.creator_id===S.user.id, owner = S.user && b.brand_id===S.user.id;
+  if(!mine && !owner) return '';
+  const done = lastStep(b)==='Completed', v = url(a.video_link);
+  const watch = v ? `<a class="pill" href="${esc(v)}" target="_blank" rel="noopener noreferrer">Watch video</a>` : '';
+  const btn = (st, label, on) => `<button class="pill" data-act="t-status" data-v="${esc(a.id)}" data-s="${st}"${on?' aria-pressed="true"':''}>${label}</button>`;
+  let h = '';
+  if(mine){
+    if(s==='applied') h = `<p class="meta">Waiting for the brand to respond to your application.</p>`;
+    else if(s==='accepted'){
+      const needAddr = hasProduct(b) && !S.del[a.id];
+      h = dealNotes(a, b) + (needAddr ? `<p class="meta">The brand needs your delivery details to send the product.</p><div><button class="pill" data-act="brief" data-v="${esc(b.id)}">Add delivery details</button></div>` : '')
+        + `<form id="tVidForm" class="sec" novalidate><label for="tVid">Send your finished video<input id="tVid" inputmode="url" placeholder="Paste the link to your video" value="${esc(a.video_link||'')}"></label><p class="meta">${hasProduct(b)?'Shoot once the product reaches you. ':''}Upload it to Google Drive, YouTube (unlisted) or Instagram and paste the link here.</p><div><button class="btn accent" type="submit">Send video to the brand</button></div></form>`;
+    }
+    else if(s==='sent') h = `<p class="meta">Your video is with the brand for review.</p><div class="th-tools">${watch}</div>`;
+    else if(s==='approved') h = `<p class="meta">${done?'Approved. The brand will mark the deal as completed.':'Approved. Payment is the next step.'}</p>`;
+    else if(s==='paid') h = `<p><span class="tag ok">${lastStep(b)}</span></p>`;
+  } else {
+    if(s==='applied'){
+      const full = ((S.mine.find(x=>x.id===b.id)||{}).applications||[]).filter(x=>['accepted','sent','approved','paid'].includes(x.status)).length >= (b.creators_needed||1);
+      h = `<p class="meta">This creator has applied to your brief.</p><div class="th-tools">${full?'<span class="tag">Brief is full</span>':btn('accepted','Accept',1)}${btn('declined','Decline')}</div>`;
+    }
+    else if(s==='accepted') h = `<p class="meta">${a.change_note?'You asked for changes: '+esc(a.change_note):'Waiting for the creator to send the video.'}</p>`;
+    else if(s==='sent'){
+      const open = same(S.tChg, a.id);
+      h = `<p class="meta">The creator has sent the video.</p><div class="th-tools">${watch}${btn('approved','Approve video',1)}<button class="pill" data-act="t-changes" data-v="${esc(a.id)}" aria-expanded="${open}">Ask for changes</button></div>`
+        + (open ? `<div class="sec"><label for="tChgTxt">What should the creator change?<textarea id="tChgTxt" rows="3" maxlength="500">${esc(S.tChgTxt||'')}</textarea></label><div class="th-tools"><button class="btn" data-act="t-changes-send" data-v="${esc(a.id)}">Send request</button><button class="pill" data-act="t-changes-cancel">Cancel</button></div></div>` : '');
+    }
+    else if(s==='approved') h = `<p class="meta">${done?'Video approved.':'Video approved. Payment is the next step.'}</p><div class="th-tools">${watch}${btn('paid', done?'Mark as completed':'Mark as paid', 1)}</div>`;
+    else if(s==='paid') h = `<p><span class="tag ok">${lastStep(b)}</span></p><div class="th-tools">${watch}</div>`;
+  }
+  return h ? `<div class="panel" id="tDeal"><b>${mine?'Your next step':'This deal'}</b>${h}</div>` : '';
+}
+async function tSync(){ if(S.view==='thread' && S.arg){ const id=S.arg, th=await tDeal(id); if(th && tInThread(id)){ S.th=th; S.msgs=await tMsgs(id); } } }
+
 function vThread(){
   const t = S.th;
   if(!t || !same(t.a.id, S.arg)) return `<p class="meta">This conversation is not available.</p>`;
@@ -1157,6 +1192,7 @@ function vThread(){
   return `<div class="sec" style="max-width:640px;margin:0 auto;width:100%">${back}
     <span class="eyebrow">${esc(b.title||'')}</span><h2>${t.admin?esc(t.other):'Messages with '+esc(t.other)}</h2>
     ${a.status==='declined'?'<span class="tag">Not selected</span>':track(a.status, b)}
+    ${tDealBar(t)}
     <div class="panel">
       <div class="th-list" id="tList" aria-live="polite">${tListHTML()}</div>
       <p class="meta">Phone numbers, emails, links and social handles are hidden in messages. Keep the deal on Boli.</p>
@@ -1215,7 +1251,7 @@ function dealNotes(a, b){
 async function tAppUpdate(id, patch, msg){
   const y = window.scrollY;
   await q(sb.from('applications').update(patch).eq('id', id));
-  await loadAll(); render(); window.scrollTo(0, y); toast(msg);
+  await loadAll(); await tSync(); render(); window.scrollTo(0, y); toast(msg);
 }
 document.addEventListener('click', e=>{
   const el = e.target.closest('[data-act^="t-"]'); if(!el || el.disabled) return;
@@ -1231,7 +1267,7 @@ document.addEventListener('click', e=>{
     const t=$('tChgTxt'), note=(t?t.value:S.tChgTxt||'').trim();
     if(note.length<5) return toast('Tell the creator what to change.');
     await q(sb.from('applications').update({status:'accepted', change_note:note}).eq('id', v));
-    const y=window.scrollY; S.tChg=null; S.tChgTxt=''; await loadAll(); render(); window.scrollTo(0,y); toast('Changes requested');
+    const y=window.scrollY; S.tChg=null; S.tChgTxt=''; await loadAll(); await tSync(); render(); window.scrollTo(0,y); toast('Changes requested');
   });
   if(a==='t-ship') return run(async()=>{
     const t=$('tTrk-'+v), tracking=t?t.value.trim().slice(0,80):'';
@@ -1244,6 +1280,14 @@ document.addEventListener('click', e=>{
     const t=$('tLink'), link=fixUrl(t?t.value:'');
     if(!T_LINK.test(link)) return toast('Reference links can be an Instagram post, a YouTube video or a Google Drive file.');
     await tSend((S.thDraft||'').trim() || 'Reference link', link);
+  });
+});
+document.addEventListener('submit', e=>{
+  if(e.target.id!=='tVidForm') return; e.preventDefault();
+  run(async()=>{
+    const link = fixUrl($('tVid').value); if(!url(link)) return toast('Paste the full link to your video.');
+    await q(sb.from('applications').update({status:'sent', video_link:link}).eq('id', S.arg));
+    await loadAll(); await tSync(); render(); toast('Video sent to the brand');
   });
 });
 document.addEventListener('input', e=>{
