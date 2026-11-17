@@ -241,9 +241,9 @@ const PK = ',handle,public_on,show_rate';
 const HANDLE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const SUPPORT_EMAIL = '';
 const TERMS = ['Deals that start on Boli are agreed, delivered and paid through Boli.','Keep all conversation about a deal inside Boli messages. Phone numbers, emails, links and social handles are hidden in messages.','Give accurate details about yourself, your followers and your brand.','Creators own their videos until the brand pays for them. Paid posts carry the paid partnership label.','Boli may charge brands a service fee on each deal. The fee is always shown before a deal is confirmed.','The Boli team can read deal messages and may step in to help or to resolve a dispute.','Taking a deal that started on Boli off the platform can get your account suspended.','Accounts that break these terms can be suspended or removed.'];
-const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms','forgot','reset','creator','edit','c'];
+const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms','forgot','reset','creator','edit','c','studio','i','a'];
 const ACTIVE = ['accepted','sent','approved','paid'];
-const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}, authNote:'', alerts:true, alertsOk:false, pwOpen:false, resendEmail:'', resendUntil:0, forgotSent:'', lang:'', invites:[], cap:{profiles:false, briefs:false, invites:false, kit:false}, samples:[], pubCreators:null, pendC:null};
+const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}, authNote:'', alerts:true, alertsOk:false, pwOpen:false, resendEmail:'', resendUntil:0, forgotSent:'', lang:'', invites:[], cap:{profiles:false, briefs:false, invites:false, kit:false, studio:false}, billing:null, studioSum:null, billOpen:false, samples:[], pubCreators:null, pendC:null};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -286,8 +286,8 @@ async function loadWork(){
 }
 async function probeCaps(){
   const safe = p => p.then(r=>r, ()=>({error:{code:'', message:'failed to fetch'}}));
-  const [p, b, i, k] = await Promise.all([safe(sb.from('profiles').select('bio').limit(1)), safe(sb.from('briefs').select('lang').limit(1)), safe(sb.from('invites').select('id').limit(1)), safe(sb.from('profiles').select('handle').limit(1))]);
-  S.cap = {profiles: capOk(p), briefs: capOk(b), invites: capOk(i), kit: capOk(k)};
+  const [p, b, i, k, st] = await Promise.all([safe(sb.from('profiles').select('bio').limit(1)), safe(sb.from('briefs').select('lang').limit(1)), safe(sb.from('invites').select('id').limit(1)), safe(sb.from('profiles').select('handle').limit(1)), safe(sb.from('collabs').select('id').limit(1))]);
+  S.cap = {profiles: capOk(p), briefs: capOk(b), invites: capOk(i), kit: capOk(k), studio: capOk(st)};
   PSEL = (S.cap.profiles ? PX : PCOLS) + (S.cap.kit ? PK : '');
 }
 const invitedTo = id => !!(isCreator() && (S.invites||[]).some(i=>i.brief_id===id));
@@ -323,6 +323,13 @@ async function doLoad0(){
     N.samples = Array.isArray(sm) ? sm : [];
     if(creator){ const l = x1[0] || {}; N.me.social = l.social; N.me.sample_link = l.sample_link; N.apps = x2; }
     else { const links = {}; x2.forEach(r=>{ links[r.application_id]=r; }); N.mine = x1; N.mine.forEach(b=>(b.applications||[]).forEach(a=>{ a.links = links[a.id]||{}; })); N.creators = x3; }
+  }
+  N.billing = null; N.studioSum = null;
+  if(N.me && N.me.role==='creator' && S.cap.studio){
+    const tol = p => Promise.resolve().then(()=>p).then(r=>r, ()=>({error:true}));
+    const [bl, ss] = await Promise.all([tol(sb.from('billing').select('*').eq('creator_id',uid).maybeSingle()), tol(sb.rpc('studio_summary'))]);
+    N.billing = bl && !bl.error ? (bl.data||null) : null;
+    N.studioSum = ss && !ss.error && ss.data && typeof ss.data==='object' ? ss.data : null;
   }
   if((S.user ? S.user.id : null) !== uid) return;
   Object.assign(S, N);
@@ -389,7 +396,7 @@ function vHome(){
     <div class="panel"><span class="eyebrow">If you are a brand</span><ol class="steps"><li>Create your brand account.</li><li>Choose what you want, and what the creator gets: payment, product or both.</li><li>Post a brief with the follower range you want.</li><li>Review applicants, or browse creators yourself.</li><li>Approve the videos you like and pay the creator.</li></ol><div><button class="btn" data-act="join" data-v="brand">Start as a brand</button></div></div>
   </div></section>`}
   ${!S.workOpen ? soonHTML() : `<section class="sec" id="briefs">
-    ${invPanel()}
+    ${studioCard()}${invPanel()}
     <div class="row" style="flex-wrap:wrap"><h2>Brands looking for creators</h2><input class="search" id="q" type="search" value="${esc(S.q)}" placeholder="Search by product, brand or place" aria-label="Search briefs"></div>
     <div class="chips"><button class="pill" data-act="cat" data-v="" aria-pressed="${!S.cat}">All</button>${Object.entries(CATS).map(([k,v])=>`<button class="pill" data-act="cat" data-v="${k}" aria-pressed="${S.cat===k}">${v}</button>`).join('')}</div>
     ${fbar('b')}
@@ -401,8 +408,41 @@ function vHome(){
   </section>
   ${footHTML()}`; }
 
+const STUDIO_TABS = ['board','invoices','earnings','enquiries'];
+const IN_STATES = ['Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal','Andaman and Nicobar Islands','Chandigarh','Dadra and Nagar Haveli and Daman and Diu','Delhi','Jammu and Kashmir','Ladakh','Lakshadweep','Puducherry','Other'];
+const BILL_RE = {pan:/^[A-Z]{5}[0-9]{4}[A-Z]$/, gstin:/^[0-9]{2}[A-Z0-9]{13}$/, upi:/^[A-Za-z0-9._-]{2,64}@[A-Za-z]{2,32}$/, account_no:/^[0-9]{6,20}$/, ifsc:/^[A-Z]{4}0[A-Z0-9]{6}$/, invoice_prefix:/^[A-Z0-9-]{1,10}$/};
+function studioCard(){
+  if(!isCreator() || !S.cap.studio) return '';
+  const x = S.studioSum || {}, n = k => Number(x[k]||0);
+  const tile = (v, t, warn) => `<div class="kv"><span>${t}</span><b${warn?' style="color:var(--accent)"':''}>${v}</b></div>`;
+  return `<div class="panel" id="studioCard"><div class="row" style="flex-wrap:wrap;gap:8px"><b>Your Studio</b><button class="pill" data-act="nav" data-v="studio">Open Studio</button></div>
+    <p class="meta">Track every collaboration, send invoices and see what you have earned, including deals from outside Boli.</p>
+    ${tile(num(n('collabs_active')), 'Active collaborations')}${tile(rs(n('unpaid_total')), 'Waiting to be paid')}${tile(rs(n('overdue_total')), 'Overdue', n('overdue_total')>0)}${tile(num(n('enquiries_new')), 'New enquiries', n('enquiries_new')>0)}</div>`;
+}
+function billPanel(){
+  const m = S.me; if(!m || m.role!=='creator' || !S.cap.studio) return '';
+  const b = S.billing || {}, has = !!(b.legal_name && (b.upi || b.account_no));
+  const f = (id, label, val, extra) => `<label for="${id}">${label}<input id="${id}" value="${esc(val||'')}" ${extra||''}></label>`;
+  if(!S.billOpen) return `<div class="panel" id="billPanel"><b>Billing details</b><p class="meta">${has ? 'Saved. Printed on your invoices as ' + esc(b.legal_name) + '.' : 'Add these once to send invoices from Studio.'}</p><div><button type="button" class="btn" data-act="billOpen">${has?'Edit billing details':'Add billing details'}</button></div></div>`;
+  return `<div class="panel" id="billPanel"><b>Billing details</b><p class="meta">Printed on your invoices. Only you and the brands you send an invoice to can see these.</p>
+    <form id="billForm" class="sec" novalidate>
+      ${f('bName','Name on invoices (your legal name)', b.legal_name, 'maxlength="100" autocomplete="name"')}
+      <label for="bAddr">Address<textarea id="bAddr" rows="3" maxlength="300">${esc(b.address||'')}</textarea></label>
+      <label for="bState">State<select id="bState"><option value="">Choose your state</option>${IN_STATES.map(x=>`<option${x===b.state?' selected':''}>${x}</option>`).join('')}</select></label>
+      <div class="two">${f('bPan','PAN', b.pan, 'maxlength="10" autocapitalize="characters" autocomplete="off" placeholder="ABCDE1234F"')}${f('bGst','GSTIN (optional)', b.gstin, 'maxlength="15" autocapitalize="characters" autocomplete="off"')}</div>
+      <p class="meta">GSTIN only if you are registered for GST.</p>
+      ${f('bUpi','UPI ID', b.upi, 'maxlength="100" autocapitalize="none" autocomplete="off" placeholder="yourname@okbank"')}
+      <p class="meta">Brands can pay you by UPI straight from your invoice. Add a UPI ID, bank details, or both.</p>
+      <div class="two">${f('bBank','Bank name', b.bank_name, 'maxlength="60"')}${f('bAccName','Account holder name', b.account_name, 'maxlength="100"')}</div>
+      <div class="two">${f('bAccNo','Account number', b.account_no, 'maxlength="20" inputmode="numeric" autocomplete="off"')}${f('bIfsc','IFSC', b.ifsc, 'maxlength="11" autocapitalize="characters" autocomplete="off" placeholder="HDFC0001234"')}</div>
+      ${f('bPrefix','Invoice number prefix', b.invoice_prefix || 'INV', 'maxlength="10" autocapitalize="characters" autocomplete="off"')}
+      <p class="meta">Your invoices are numbered like ${esc((b.invoice_prefix||'INV'))}/26-27/001.</p>
+      <p class="meta" id="bErr" hidden></p>
+      <div class="cta"><button class="btn accent" type="submit">Save billing details</button><button type="button" class="btn ghost" data-act="billClose">Cancel</button></div>
+    </form></div>`;
+}
 function soonHTML(){
-  return `<section class="sec" id="briefs"><div class="panel" id="soonPanel"><h2>Work opens soon</h2><p class="meta">Brands are getting set up. We will email you the day briefs open.</p></div>${isCreator()?readyHTML():''}</section>`;
+  return `<section class="sec" id="briefs"><div class="panel" id="soonPanel"><h2>Work opens soon</h2><p class="meta">Brands are getting set up. We will email you the day briefs open.</p></div>${isCreator()?studioCard()+readyHTML():''}</section>`;
 }
 function readyHTML(){
   const m = S.me || {}, kit = !!(S.cap && S.cap.kit);
@@ -738,6 +778,7 @@ function vAccount(){
     ${m.role==='creator'?`<div class="kv"><span>Languages</span><span>${(m.langs||[]).join(', ')}</span></div><div class="kv"><span>You make</span><span>${(m.cats||[]).map(k=>CATS[k]||k).join(', ')}</span></div><div class="kv"><span>Followers</span><span>${num(m.followers)}</span></div><div class="kv"><span>Track record</span><span>${rec(m.id)}</span></div>`:`<div class="kv"><span>Category</span><span>${CATS[(m.cats||[])[0]]||''}</span></div>`}
     <button class="btn wide" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost wide" data-act="signout">Sign out</button></div>
     ${kitPanels()}
+    ${billPanel()}
     ${S.alertsOk?`<div class="panel"><b>Email alerts</b><p class="meta">We email you when something happens on your deals.</p><div class="chips" style="flex-wrap:wrap;overflow:visible"><button type="button" class="pill" data-act="alerts" data-v="on" aria-pressed="${S.alerts}">On</button><button type="button" class="pill" data-act="alerts" data-v="off" aria-pressed="${!S.alerts}">Off</button></div></div>`:''}
     <div class="panel"><b>Password</b>${S.pwOpen?`<form id="pwForm" class="sec" novalidate>
       <label for="cPass">New password<input id="cPass" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters"></label>
@@ -761,7 +802,7 @@ function vThread(){
 /* ---------- render ---------- */
 function nav(){
   const hl = S.workOpen===false ? 'Home' : 'Briefs';
-  const items = !S.user || !S.me ? [['home',hl]] : isCreator() ? [['home',hl],['work','My work'],['account','Account']] : [['dash','Dashboard'],['find','Creators'],['home','Briefs'],['account','Account']];
+  const items = !S.user || !S.me ? [['home',hl]] : isCreator() ? [['home',hl],['work','My work'],...(S.cap.studio?[['studio','Studio']]:[]),['account','Account']] : [['dash','Dashboard'],['find','Creators'],['home','Briefs'],['account','Account']];
   if(S.me && S.me.is_admin) items.push(['admin','Boli team']);
   const cur = S.view==='creator' ? 'find' : S.view==='edit' ? 'dash' : S.view;
   const html = items.map(([v,t])=>`<button class="nv" data-act="nav" data-v="${v}"${cur===v?' aria-current="page"':''}>${t}</button>`).join('');
@@ -783,9 +824,9 @@ function fillForm(){
 function render(){
   keepForm();
   const fa=$('fAsk'); if(fa) S.fa=fa.value;
-  if(S.user && !S.me && S.view!=='profile' && S.view!=='terms' && S.view!=='reset' && S.view!=='c') S.view='profile';
-  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, forgot:vForgot, reset:vReset, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome(), creator:()=>typeof vCreator==='function' ? vCreator() : vHome(), edit:vEdit, c:()=>typeof vKit==='function' ? vKit() : vHome()};
-  const need_me = ['work','dash','find','account','thread','admin','creator','edit'];
+  if(S.user && !S.me && !['profile','terms','reset','c','i','a'].includes(S.view)) S.view='profile';
+  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, forgot:vForgot, reset:vReset, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome(), creator:()=>typeof vCreator==='function' ? vCreator() : vHome(), edit:vEdit, c:()=>typeof vKit==='function' ? vKit() : vHome(), studio:()=>typeof vStudio==='function' ? vStudio() : vHome(), i:()=>typeof vInvoice==='function' ? vInvoice() : vHome(), a:()=>typeof vAgreement==='function' ? vAgreement() : vHome()};
+  const need_me = ['work','dash','find','account','thread','admin','creator','edit','studio'];
   if(need_me.includes(S.view) && !S.me) S.view = 'home';
   if(S.view==='admin' && !(S.me && S.me.is_admin)) S.view = 'home';
   const ban = S.me && S.me.suspended ? '<div class="lock" role="alert" style="margin-bottom:18px"><b>This account is suspended. Contact the Boli team.</b></div>' : '';
@@ -816,10 +857,11 @@ async function route(){
     if(!ROUTES.includes(view)) to('home');
     if(view==='reset' && !S.user){ S.authMode = 'in'; S.authNote = 'Open the reset link from your email again, or ask for a new one below.'; to('auth'); }
     if(view==='forgot' && S.user) to(S.me ? (isBrand() ? 'dash' : 'home') : 'profile');
-    if(S.user && !S.me && view!=='profile' && view!=='terms' && view!=='reset' && view!=='c') to('profile');
+    if(S.user && !S.me && !['profile','terms','reset','c','i','a'].includes(view)) to('profile');
     if(view==='profile' && !S.user) to('auth');
     if(view==='auth' && S.user) to(S.me ? (isBrand() ? 'dash' : 'home') : 'profile');
-    if(['work','dash','find','account','thread','admin','creator','edit'].includes(view) && !S.me) to(S.user ? 'profile' : 'home');
+    if(['work','dash','find','account','thread','admin','creator','edit','studio'].includes(view) && !S.me) to(S.user ? 'profile' : 'home');
+    if(view==='studio' && !(isCreator() && S.cap.studio && typeof openStudio==='function')) to('home');
     if(view==='admin' && !(S.me && S.me.is_admin && typeof openAdmin==='function')) to('home');
     if(view==='creator' && !(arg && (isBrand() || (S.me && S.me.is_admin)) && typeof openCreator==='function')) to(isBrand() ? 'find' : 'home');
     if(view==='edit' && !(isBrand() && arg && S.mine.some(b=>b.id===arg))) to(isBrand() ? 'dash' : 'home');
@@ -839,6 +881,9 @@ async function route(){
     if(view==='admin') return await openAdmin();
     if(view==='creator') return await openCreator(arg);
     if(view==='c'){ if(arg && typeof openKit==='function') return await openKit(arg); to('home'); }
+    if(view==='studio') return await openStudio(STUDIO_TABS.includes(arg) ? arg : 'board');
+    if(view==='i'){ if(arg && typeof openInvoice==='function') return await openInvoice(arg); to('home'); }
+    if(view==='a'){ if(arg && typeof openAgreement==='function') return await openAgreement(arg); to('home'); }
     if(view!=='auth') S.authNote = '';
     if(view!=='account') S.pwOpen = false;
     if(view!=='forgot') S.forgotSent = '';
@@ -852,7 +897,7 @@ async function shareBrief(id){
   catch(e){ const t = document.createElement('textarea'); t.value = link; t.setAttribute('readonly',''); t.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(t); t.select(); let done = false; try{ done = document.execCommand('copy'); }catch(_){} t.remove(); toast(done ? 'Link copied' : link); }
 }
 let busyN = 0;
-const niceErr = m => /invites_brief_id_creator_id_key/.test(m||'') ? 'You have already invited this creator.' : /profiles_handle_lower_key/.test(m||'') ? 'That link name is not available.' : /row-level security/.test(m||'') ? 'That is not available right now. Refresh the page and try again.' : /violates check constraint/.test(m||'') ? 'One of the fields is too long or not valid. Please shorten it and try again.' : (m||'Something went wrong. Please try again.');
+const niceErr = m => /invites_brief_id_creator_id_key/.test(m||'') ? 'You have already invited this creator.' : /invoices_creator_id_number_key/.test(m||'') ? 'That invoice number is already used.' : /profiles_handle_lower_key/.test(m||'') ? 'That link name is not available.' : /row-level security/.test(m||'') ? 'That is not available right now. Refresh the page and try again.' : /violates check constraint/.test(m||'') ? 'One of the fields is too long or not valid. Please shorten it and try again.' : (m||'Something went wrong. Please try again.');
 async function run(fn){ busyN++; document.body.classList.add('busy'); try{ await fn(); }catch(e){ toast(niceErr(e.message)); } finally{ if(--busyN<=0){ busyN=0; document.body.classList.remove('busy'); } } }
 
 /* ---------- events ---------- */
@@ -866,6 +911,7 @@ document.addEventListener('click', e=>{
   if(a==='home') return go('home');
   if(a==='share') return shareBrief(v);
   if(a==='kit') return go('c', v);
+  if(a==='billOpen' || a==='billClose'){ S.billOpen = a==='billOpen'; const y = window.scrollY; render(); window.scrollTo(0, y); if(S.billOpen){ const n = $('bName'); if(n) n.focus(); } return; }
   if(a==='kcopy') return copyLink(kitLink(S.me));
   if(a==='kshare'){ const link = kitLink(S.me); if(navigator.share) return navigator.share({title:'Boli', text:(S.me.name||'My profile')+' on Boli', url:link}).catch(e=>{ if(!e || e.name!=='AbortError') copyLink(link); }); return copyLink(link); }
   if(a==='kpub') return run(async()=>{ const on = v==='on'; if(on===!!S.me.public_on) return; await q(sb.from('profiles').update({public_on:on}).eq('id',S.user.id)); S.me.public_on = on; render(); toast(on?'Your public profile is on':'Your public profile is off'); });
@@ -906,6 +952,7 @@ document.addEventListener('click', e=>{
   render(); window.scrollTo(0,y);
 });
 
+document.addEventListener('input', e=>{ const t = e.target; if(['bPan','bGst','bIfsc','bPrefix'].includes(t.id)){ const p = t.selectionStart, u = t.value.toUpperCase(); if(u!==t.value){ t.value = u; try{ t.setSelectionRange(p, p); }catch(x){} } } });
 document.addEventListener('input', e=>{ if(e.target.id==='q'){ S.q=e.target.value; $('grid').innerHTML=gridHTML(); } });
 let kTimer = 0, kSeq = 0;
 const handleMsg = h => !h ? '' : h.length<3 ? 'Use at least 3 characters.' : h.length>30 ? 'Use 30 characters or fewer.' : !HANDLE_RE.test(h) ? 'Use small letters, numbers and single hyphens between them.' : '';
@@ -991,6 +1038,25 @@ document.addEventListener('submit', e=>{
     if(isNew) await q(sb.from('profiles').insert(row)); else { const {id:_i, role:_r, ...patch} = row; await q(sb.from('profiles').update(patch).eq('id', S.user.id)); }
     await loadAll(); toast(isNew?'Welcome to Boli':'Profile saved');
     isNew ? afterLogin() : go('account');
+  });
+  if(id==='billForm') return run(async()=>{
+    const v = id => { const e = $(id); return e ? String(e.value||'').trim() : ''; };
+    const up = id => v(id).toUpperCase().replace(/\s+/g, '');
+    const row = {creator_id: S.user.id, legal_name: v('bName') || null, address: v('bAddr') || null, state: v('bState') || null,
+      pan: up('bPan') || null, gstin: up('bGst') || null, upi: v('bUpi').replace(/\s+/g, '') || null, bank_name: v('bBank') || null,
+      account_name: v('bAccName') || null, account_no: v('bAccNo').replace(/\s+/g, '') || null, ifsc: up('bIfsc') || null, invoice_prefix: up('bPrefix') || 'INV'};
+    const bad = !row.legal_name ? 'Add the name to print on your invoices.'
+      : row.pan && !BILL_RE.pan.test(row.pan) ? 'Check your PAN. It looks like ABCDE1234F.'
+      : row.gstin && !BILL_RE.gstin.test(row.gstin) ? 'Check your GSTIN. It has 15 letters and numbers.'
+      : row.upi && !BILL_RE.upi.test(row.upi) ? 'Check your UPI ID. It looks like yourname@okbank.'
+      : row.account_no && !BILL_RE.account_no.test(row.account_no) ? 'Check your account number. Use digits only.'
+      : row.ifsc && !BILL_RE.ifsc.test(row.ifsc) ? 'Check your IFSC. It looks like HDFC0001234.'
+      : !BILL_RE.invoice_prefix.test(row.invoice_prefix) ? 'The invoice prefix can use capital letters, numbers and hyphens, up to 10.'
+      : (row.account_no && !row.ifsc) || (row.ifsc && !row.account_no) ? 'Add both the account number and the IFSC, or leave both empty.'
+      : !row.upi && !row.account_no ? 'Add a UPI ID or bank details so brands can pay you.' : '';
+    if(bad) return showErr('bErr', bad);
+    const saved = await q(sb.from('billing').upsert(row).select().maybeSingle());
+    S.billing = saved || row; S.billOpen = false; render(); toast('Billing details saved');
   });
   if(id==='kForm') return run(async()=>{
     const h = $('kHandle').value.trim().toLowerCase(), bad = handleMsg(h), hint = $('kHint');
@@ -1875,7 +1941,7 @@ function vKit(){
     : v==='brand' ? `<button class="btn accent" data-act="k-invite">Invite to a brief</button>${share}`
     : v==='self' ? `${share}<button class="btn ghost" data-act="nav" data-v="profile">Edit profile</button><button class="btn ghost" data-act="nav" data-v="account">Manage link</button><span class="meta">${k.public_on===false ? 'Your public profile is off, so only you and brands on Boli can see this.' : 'This is what people see when you share your link.'}</span>`
     : share;
-  return `<div class="sec k-wrap">${adminBack}<div class="k-bar">${cta}</div>${kitHTML(k, {viewer:v})}</div>`;
+  return `<div class="sec k-wrap">${adminBack}<div class="k-bar">${cta}</div>${v!=='self' && S.cap && S.cap.studio && typeof kitEnquiryHTML==='function' ? kitEnquiryHTML(k) : ''}${kitHTML(k, {viewer:v})}</div>`;
 }
 
 /* In-app creator page for brands and the Boli team: the same report, then the invite section. */
@@ -1942,6 +2008,893 @@ document.addEventListener('error', e=>{
   const d = document.createElement('div'); d.className = 'k-fb'; d.setAttribute('aria-hidden','true'); d.textContent = img.dataset.kfb || 'Video';
   img.replaceWith(d);
 }, true);
+</script>
+
+<!-- part_studio -->
+<style>
+.st-wrap{display:flex;flex-direction:column;gap:16px;min-width:0}
+.st-head{display:flex;flex-direction:column;gap:4px}
+.st-head h1{font-size:clamp(1.8rem,5vw,2.4rem)}
+.st-tabs{position:sticky;top:calc(env(safe-area-inset-top,0px) + 64px);z-index:5;display:flex;gap:8px;overflow-x:auto;padding:8px 0;margin:0 -2px;background:color-mix(in oklab,var(--bg) 92%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);scrollbar-width:none}
+.st-tabs::-webkit-scrollbar{display:none}
+.st-tabs .pill{flex:none}
+.st-badge{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;margin-left:6px;border-radius:999px;background:var(--accent);color:var(--on-accent);font-size:.72rem;font-weight:700}
+.st-sum{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.st-tile{background:var(--surface);border-radius:18px;padding:14px 16px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.st-tile b{font-family:var(--display);font-size:1.35rem;letter-spacing:-.02em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.st-tile span{font-size:.8rem;color:var(--muted)}
+.st-tile.warn b{color:var(--accent)}
+.st-filters{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin}
+.st-filters .pill{flex:none}
+.st-board{display:flex;flex-direction:column;gap:18px;min-width:0}
+.st-col{display:flex;flex-direction:column;gap:10px;min-width:0}
+.st-col h3{font-size:.95rem;display:flex;align-items:center;gap:8px;color:var(--muted);font-weight:600}
+.st-col h3 em{font-style:normal;font-size:.78rem;background:var(--chip);color:var(--muted);border-radius:999px;padding:1px 8px}
+.st-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.st-card .st-top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.st-card .st-top b{overflow-wrap:anywhere}
+.st-card p{margin:0;overflow-wrap:anywhere}
+.st-chips{display:flex;flex-wrap:wrap;gap:6px}
+.st-acts{display:flex;flex-wrap:wrap;gap:6px}
+.st-acts .pill{font-size:.82rem;padding:6px 12px}
+.tag.st-mute{background:var(--chip);color:var(--muted)}
+.tag.st-info{background:var(--chip);color:var(--ink)}
+.st-form{display:flex;flex-direction:column;gap:12px}
+.st-form label{min-width:0}
+.st-form .two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.st-items{display:flex;flex-direction:column;gap:10px}
+.st-item{display:grid;grid-template-columns:minmax(0,1fr) 70px 110px auto;gap:8px;align-items:end;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.st-item .st-amt{font-variant-numeric:tabular-nums;padding:0 0 12px;white-space:nowrap;text-align:right}
+.st-tot{display:flex;flex-direction:column;gap:4px;font-variant-numeric:tabular-nums}
+.st-tot div{display:flex;justify-content:space-between;gap:12px}
+.st-tot div.big-t{font-weight:700;font-size:1.15rem;border-top:1px solid var(--line);padding-top:6px}
+.st-row{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.st-confirm{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:.85rem}
+.st-bars{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:6px;align-items:end;height:180px;padding-top:18px}
+.st-bar{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;height:100%;min-width:0}
+.st-bar i{display:block;width:100%;max-width:34px;border-radius:6px 6px 2px 2px;background:var(--accent);min-height:2px}
+.st-bar i.zero{background:var(--chip)}
+.st-bar span{font-size:.66rem;color:var(--muted)}
+.st-bar em{font-style:normal;font-size:.62rem;color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums;writing-mode:vertical-rl;transform:rotate(180deg);max-height:70px;overflow:hidden}
+.st-table{width:100%;border-collapse:collapse;font-size:.9rem}
+.st-table td,.st-table th{padding:8px 4px;border-bottom:1px solid var(--line);text-align:left;overflow-wrap:anywhere}
+.st-table td:last-child,.st-table th:last-child{text-align:right;white-space:nowrap}
+.st-prev{border:1px solid var(--line);border-radius:14px;padding:14px;max-height:360px;overflow:auto;font-size:.9rem;overflow-wrap:anywhere}
+.st-msg{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border-radius:12px;padding:10px 12px;font-size:.92rem}
+.st-link{font-size:.82rem;color:var(--muted);overflow-wrap:anywhere}
+@media (min-width:700px){.st-sum{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media (min-width:960px){
+  .st-board.st-all{flex-direction:row;overflow-x:auto;align-items:flex-start;padding-bottom:10px}
+  .st-board.st-all .st-col{flex:0 0 250px}
+}
+@media (max-width:520px){
+  .st-item{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto}
+  .st-item .st-desc{grid-column:1/-1}
+  .st-item .st-amt{grid-column:1/-1;text-align:left;padding:0}
+  .st-bar em{font-size:.56rem}
+}
+</style>
+<script>
+/* ---------- Boli Studio: the creator's own business tools ---------- */
+const ST_TABS = [['board','Collaborations'],['invoices','Invoices'],['earnings','Earnings'],['enquiries','Enquiries']];
+const ST_STATUS = [['lead','Lead'],['agreed','Agreed'],['shooting','Shooting'],['sent','Sent'],['posted','Posted'],['paid','Paid'],['cancelled','Cancelled']];
+const ST_FLOW = ['lead','agreed','shooting','sent','posted','paid'];
+const ST_KIND = {reel:'Reel', story:'Story', post:'Post', ugc:'UGC video', integration:'Integration', youtube:'YouTube video', other:'Other'};
+const ST_PLAT = {instagram:'Instagram', youtube:'YouTube', other:'Other'};
+const ST_GST = [['none','No GST'],['cgst_sgst','CGST 9% + SGST 9%'],['igst','IGST 18%']];
+const ST_MONTHS = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
+const ST_APPMAP = {applied:'lead', accepted:'shooting', sent:'sent', approved:'posted', paid:'paid'};
+const ST_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function stS(){ if(!S.st) S.st = {tab:'board', collabs:[], invoices:[], enquiries:[], agreements:[], billing:null, loaded:false, filter:'all', showCancelled:false, mode:null, edit:{}, confirm:null, fy:null, err:null}; return S.st; }
+const stLabel = s => (ST_STATUS.find(x=>x[0]===s)||['',s])[1];
+const stIST = ts => ts ? new Date(new Date(ts).getTime() + 19800000).toISOString().slice(0,10) : '';
+const stDate = d => d ? new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : '';
+const stAdd = (d, n) => { const t = new Date(String(d).slice(0,10)+'T00:00:00Z'); t.setUTCDate(t.getUTCDate()+n); return t.toISOString().slice(0,10); };
+const stFY = d => { if(!d) return ''; const y = +String(d).slice(0,4), m = +String(d).slice(5,7), s = m>=4 ? y : y-1; return s + '-' + String(s+1).slice(2); };
+const stFYStart = fy => +String(fy).slice(0,4);
+const stTxt = v => { const t = String(v==null?'':v).trim(); return t ? t : null; };
+const stInt = v => { const n = parseInt(String(v==null?'':v).replace(/[^0-9]/g,''), 10); return isNaN(n) ? 0 : n; };
+const stNum = v => { const n = parseFloat(String(v==null?'':v).replace(/[^0-9.]/g,'')); return isNaN(n) ? 0 : n; };
+const stOverdueCollab = c => !!c.due_date && c.due_date < todayIN() && !['posted','paid','cancelled'].includes(c.status);
+const stOverdueInv = i => i.status==='sent' && !!i.due_date && i.due_date < todayIN();
+const stInvLink = i => location.origin + '/#/i/' + i.token;
+const stAgrLink = a => location.origin + '/#/a/' + a.token;
+const stInvFor = id => S.st.invoices.filter(i=>i.collab_id===id && i.status!=='void')[0];
+const stAgrFor = id => S.st.agreements.filter(a=>a.collab_id===id && a.status!=='void')[0];
+const stBillOk = () => { const b = S.st.billing; return !!(b && b.legal_name && (b.upi || b.account_no)); };
+function stCalc(items, gst){
+  const sub = Math.round((items||[]).reduce((t, it)=>t + stNum(it.qty) * stNum(it.rate), 0));
+  const g = gst && gst!=='none' ? Math.round(sub * 0.18) : 0;
+  return {sub, gst:g, total:sub + g};
+}
+function stCopy(link){ if(typeof copyLink==='function') return copyLink(link); try{ navigator.clipboard.writeText(link).then(()=>toast('Link copied'), ()=>toast(link)); }catch(e){ toast(link); } }
+function stBoliDeals(){
+  return (S.apps||[]).filter(a=>a.briefs && ST_APPMAP[a.status]).map(a=>{ const b = a.briefs, prod = b.comp==='product' || b.comp==='both';
+    return {boli:true, id:a.id, brief_id:a.brief_id, brand_name:b.brand_name, title:b.title, kind:'boli', status:ST_APPMAP[a.status], fee:b.comp==='product'?0:(b.pay||0), product_note:prod?b.product_note:null, product_value:prod?(b.product_value||0):0, app:a}; });
+}
+
+/* ---------- data ---------- */
+async function stLoad(){
+  const st = stS(), uid = S.user.id;
+  const t = p => Promise.resolve(p).then(r=>r && !r.error ? r.data : null, ()=>null);
+  const [c, i, e, a, b] = await Promise.all([
+    t(sb.from('collabs').select('*').eq('creator_id', uid).order('created_at', {ascending:false})),
+    t(sb.from('invoices').select('*').eq('creator_id', uid).order('created_at', {ascending:false})),
+    t(sb.from('enquiries').select('*').eq('creator_id', uid).order('created_at', {ascending:false})),
+    t(sb.from('agreements').select('*').eq('creator_id', uid).order('created_at', {ascending:false})),
+    t(sb.from('billing').select('*').eq('creator_id', uid).maybeSingle())]);
+  st.collabs = c || []; st.invoices = i || []; st.enquiries = e || []; st.agreements = a || []; st.billing = b || null; st.loaded = true; st.loadedAt = Date.now();
+}
+async function openStudio(tab){
+  if(!S.user || !S.me || S.me.role!=='creator'){ S.view='home'; S.arg=null; render(); return; }
+  const st = stS();
+  const t = ST_TABS.some(x=>x[0]===tab) ? tab : 'board', fromOutside = S.view!=='studio';
+  if(st.tab!==t){ st.confirm = null; if(!(st.mode==='inv' && t==='invoices') && !((st.mode==='collab' || st.mode==='agr') && t==='board')) st.mode = null; }
+  st.tab = t; S.view = 'studio'; S.arg = t;
+  if(!st.loaded){ render(); try{ await stLoad(); }catch(e){ st.err = 'Could not load your Studio. Refresh to try again.'; } }
+  if(S.view!=='studio') return;
+  render(); window.scrollTo(0,0);
+  if(st.loaded && (fromOutside || Date.now()-(st.loadedAt||0) > 20000)){
+    stLoad().then(()=>{ if(S.view==='studio' && !st.mode){ const y=window.scrollY; render(); window.scrollTo(0,y); } }).catch(()=>{});
+  }
+}
+async function stReload(msg){ await stLoad(); const y = window.scrollY; render(); window.scrollTo(0,y); if(msg) toast(msg); }
+
+/* ---------- view ---------- */
+function stSummary(){
+  const st = S.st, active = st.collabs.filter(c=>['agreed','shooting','sent','posted'].includes(c.status)).length;
+  const unpaid = st.invoices.filter(i=>i.status==='sent'), od = unpaid.filter(stOverdueInv);
+  const sum = l => l.reduce((t,i)=>t + (i.total||0), 0), nw = st.enquiries.filter(e=>e.status==='new').length;
+  const tile = (v, l, w) => `<div class="st-tile${w?' warn':''}"><b>${v}</b><span>${l}</span></div>`;
+  return `<div class="st-sum">${tile(num(active),'Active collaborations')}${tile(num(unpaid.length),'Unpaid invoices')}${tile(rs(sum(unpaid)),'Waiting to be paid')}${tile(rs(sum(od)),'Overdue', sum(od)>0)}${tile(num(nw),'New enquiries', nw>0)}</div>`;
+}
+function vStudio(){
+  const st = stS();
+  if(!S.me || S.me.role!=='creator') return `<p class="meta">Studio is for creators.</p>`;
+  const nw = st.enquiries.filter(e=>e.status==='new').length;
+  const tabs = `<nav class="st-tabs" aria-label="Studio sections">${ST_TABS.map(([k,t])=>`<button class="pill" data-act="st-tab" data-v="${k}" aria-pressed="${st.tab===k}">${t}${k==='enquiries'&&nw?`<span class="st-badge">${nw}</span>`:''}</button>`).join('')}</nav>`;
+  let body;
+  if(!st.loaded) body = st.err ? `<p class="meta">${esc(st.err)}</p>` : `<p class="meta">Loading your Studio…</p>`;
+  else if(st.mode==='collab') body = stCollabEditor();
+  else if(st.mode==='inv') body = stInvEditor();
+  else if(st.mode==='agr') body = stAgrEditor();
+  else body = st.tab==='invoices' ? stInvoices() : st.tab==='earnings' ? stEarnings() : st.tab==='enquiries' ? stEnquiries() : stBoard();
+  return `<div class="st-wrap"><div class="st-head"><span class="eyebrow">Studio</span><h1>Your creator business</h1><p class="meta">Every collaboration, invoice and payment in one place, including deals that did not come through Boli.</p></div>
+    ${tabs}${st.loaded && !st.mode && st.tab!=='earnings' ? stSummary() : ''}${body}</div>`;
+}
+function stConfirmHTML(key, label, yes){
+  return S.st.confirm===key ? `<span class="st-confirm"><span>${label}</span><button class="pill" data-act="st-yes" data-v="${esc(key)}" aria-pressed="true">${yes}</button><button class="pill" data-act="st-no">Cancel</button></span>` : '';
+}
+
+/* ---------- 1. collaborations board ---------- */
+function stCard(c){
+  const st = S.st, od = !c.boli && stOverdueCollab(c);
+  const money = [c.fee ? rs(c.fee) : '', c.product_note ? esc(c.product_note) + (c.product_value ? ' (' + rs(c.product_value) + ')' : '') : ''].filter(Boolean).join(' + ') || 'No fee set';
+  const dates = [c.due_date ? 'Due ' + stDate(c.due_date) : '', c.post_date ? 'Post ' + stDate(c.post_date) : ''].filter(Boolean).join(' · ');
+  if(c.boli) return `<article class="st-card"><div class="st-top"><b>${esc(c.brand_name)}</b><span class="tag ok">On Boli</span></div><p>${esc(c.title)}</p><p class="meta">${money}</p><div class="st-acts"><button class="pill" data-act="brief" data-v="${esc(c.brief_id)}">Open brief</button><button class="pill" data-act="thread" data-v="${esc(c.id)}">Messages</button></div></article>`;
+  const inv = stInvFor(c.id), agr = stAgrFor(c.id);
+  const chips = [od ? '<span class="tag">Overdue</span>' : '',
+    inv ? `<span class="tag ${inv.status==='paid'?'ok':stOverdueInv(inv)?'':inv.status==='sent'?'st-info':'st-mute'}">Invoice ${inv.status==='paid'?'paid':stOverdueInv(inv)?'overdue':inv.status==='sent'?'sent':'draft'}</span>` : '',
+    agr ? `<span class="tag ${agr.status==='accepted'?'ok':agr.status==='sent'?'st-info':'st-mute'}">${agr.status==='accepted'?'Agreement accepted' + (agr.brand_signed_name?' by '+esc(agr.brand_signed_name):'') + (agr.brand_signed_at?' on '+stDate(stIST(agr.brand_signed_at)):''):agr.status==='sent'?'Agreement sent':'Agreement draft'}</span>` : ''].join('');
+  const i = ST_FLOW.indexOf(c.status), next = i>=0 && i<ST_FLOW.length-1 ? ST_FLOW[i+1] : null;
+  const k = 'collab:' + c.id;
+  return `<article class="st-card"><div class="st-top"><b>${esc(c.brand_name)}</b><span class="tag st-mute">${esc(ST_KIND[c.kind]||'Other')}</span></div>
+    <p>${esc(c.title)}</p><p class="meta">${money}${dates?'<br>'+dates:''}</p>${chips?`<div class="st-chips">${chips}</div>`:''}
+    <div class="st-acts">${next?`<button class="pill" data-act="st-next" data-v="${esc(c.id)}" data-s="${next}">Move to ${stLabel(next)}</button>`:''}
+      <button class="pill" data-act="st-cedit" data-v="${esc(c.id)}">Edit</button>
+      ${inv?`<button class="pill" data-act="st-iopen" data-v="${esc(inv.id)}">Invoice</button>`:c.status!=='cancelled'?`<button class="pill" data-act="st-inew" data-v="${esc(c.id)}">Create invoice</button>`:''}
+      ${agr?`<button class="pill" data-act="st-aopen" data-v="${esc(agr.id)}">Agreement</button>`:c.status!=='cancelled'?`<button class="pill" data-act="st-anew" data-v="${esc(c.id)}">Create agreement</button>`:''}
+      ${S.st.confirm===k?'':`<button class="pill" data-act="st-ask" data-v="${esc(k)}">Delete</button>`}</div>
+    ${stConfirmHTML(k, 'Delete this collaboration?', 'Yes, delete')}</article>`;
+}
+function stBoard(){
+  const st = S.st, all = [...st.collabs, ...stBoliDeals()];
+  const count = s => all.filter(c=>c.status===s).length;
+  const f = st.filter;
+  const pills = `<div class="st-filters" role="group" aria-label="Filter by status">${[['all','All']].concat(ST_STATUS.filter(s=>s[0]!=='cancelled')).map(([k,t])=>`<button class="pill" data-act="st-filter" data-v="${k}" aria-pressed="${f===k}">${t}${k!=='all'&&count(k)?' · '+count(k):''}</button>`).join('')}</div>`;
+  const add = `<div class="st-row"><h2>Collaborations</h2><button class="btn accent" data-act="st-cnew">Add a collaboration</button></div>`;
+  if(!all.length) return add + `<div class="panel"><h3>Track every brand deal here</h3><p class="meta">Add deals you got on Instagram, WhatsApp or email, not just Boli ones. Then make invoices and see what you have earned.</p><div><button class="btn" data-act="st-cnew">Add your first collaboration</button></div></div>`;
+  const cols = (f==='all' ? ST_STATUS.filter(s=>s[0]!=='cancelled') : ST_STATUS.filter(s=>s[0]===f)).map(([k,t])=>{
+    const list = all.filter(c=>c.status===k);
+    if(f==='all' && !list.length) return '';
+    return `<section class="st-col"><h3>${t}<em>${list.length}</em></h3>${list.map(stCard).join('') || '<p class="meta">Nothing here.</p>'}</section>`;
+  }).join('');
+  const canc = all.filter(c=>c.status==='cancelled');
+  const cancHTML = canc.length && f==='all' ? `<div>${st.showCancelled ? `<section class="st-col"><h3>Cancelled<em>${canc.length}</em></h3>${canc.map(stCard).join('')}</section><button class="link" data-act="st-canc">Hide cancelled</button>` : `<button class="link" data-act="st-canc">Show cancelled (${canc.length})</button>`}</div>` : '';
+  return add + pills + `<div class="st-board${f==='all'?' st-all':''}">${cols}</div>` + cancHTML;
+}
+const ST_CFIELDS = ['brand_name','contact_name','brand_email','brand_phone','title','deliverables','platform','kind','due_date','post_date','fee','product_note','product_value','status','notes'];
+function stCollabEditor(){
+  const e = S.st.edit.collab || {}, v = k => esc(e[k]==null?'':e[k]);
+  const sel = (k, opts) => `<select data-sf="collab.${k}" id="stc_${k}">${opts.map(([a,b])=>`<option value="${a}"${String(e[k])===a?' selected':''}>${b}</option>`).join('')}</select>`;
+  return `<form id="stCollabForm" class="panel st-form" novalidate>
+    <button type="button" class="link" data-act="st-back">‹ Back to collaborations</button>
+    <h2>${e.id?'Edit collaboration':'New collaboration'}</h2>
+    <div class="two"><label>Brand name<input data-sf="collab.brand_name" id="stc_brand_name" maxlength="100" value="${v('brand_name')}"></label><label>Contact person (optional)<input data-sf="collab.contact_name" maxlength="80" value="${v('contact_name')}"></label></div>
+    <div class="two"><label>Brand email (optional)<input data-sf="collab.brand_email" type="email" maxlength="120" value="${v('brand_email')}"></label><label>Brand phone (optional)<input data-sf="collab.brand_phone" inputmode="tel" maxlength="20" value="${v('brand_phone')}"></label></div>
+    <label>What is the deal?<input data-sf="collab.title" id="stc_title" maxlength="150" placeholder="e.g. Diwali reel for the new masala range" value="${v('title')}"></label>
+    <label>Deliverables (optional)<textarea data-sf="collab.deliverables" rows="3" maxlength="1000" placeholder="e.g. 1 reel of 30 seconds, 2 stories, link in bio for 7 days">${v('deliverables')}</textarea></label>
+    <div class="two"><label>Platform${sel('platform', Object.entries(ST_PLAT))}</label><label>Type${sel('kind', Object.entries(ST_KIND))}</label></div>
+    <div class="two"><label>Deliver by<input type="date" data-sf="collab.due_date" value="${v('due_date')}"></label><label>Posting date<input type="date" data-sf="collab.post_date" value="${v('post_date')}"></label></div>
+    <div class="two"><label>Fee in ₹<input type="number" min="0" step="100" data-sf="collab.fee" data-t="int" value="${v('fee')}"></label><label>Status${sel('status', ST_STATUS)}</label></div>
+    <div class="two"><label>Product received (optional)<input data-sf="collab.product_note" maxlength="150" value="${v('product_note')}"></label><label>Product value in ₹<input type="number" min="0" step="50" data-sf="collab.product_value" data-t="int" value="${v('product_value')}"></label></div>
+    <label>Notes (optional)<textarea data-sf="collab.notes" rows="2" maxlength="1000">${v('notes')}</textarea></label>
+    <p class="meta" id="stcErr" hidden></p>
+    <div class="st-acts"><button class="btn accent" type="submit">${e.id?'Save changes':'Add collaboration'}</button><button type="button" class="btn ghost" data-act="st-back">Cancel</button></div>
+  </form>`;
+}
+function stCollabPayload(e){
+  const p = {};
+  ST_CFIELDS.forEach(k=>{ let x = e[k];
+    if(k==='fee' || k==='product_value') x = stInt(x);
+    else if(k==='platform' || k==='kind' || k==='status') x = x || ({platform:'instagram', kind:'reel', status:'agreed'})[k];
+    else x = stTxt(x);
+    p[k] = x; });
+  return p;
+}
+
+/* ---------- 2. invoices ---------- */
+function stInvChip(i){
+  if(i.status==='paid') return '<span class="tag ok">Paid</span>';
+  if(i.status==='void') return '<span class="tag st-mute">Void</span>';
+  if(i.status==='draft') return '<span class="tag st-mute">Draft</span>';
+  return stOverdueInv(i) ? '<span class="tag">Overdue</span>' : '<span class="tag st-info">Sent</span>';
+}
+function stInvoices(){
+  const st = S.st, list = st.invoices;
+  const head = `<div class="st-row"><h2>Invoices</h2><button class="btn accent" data-act="st-inew">New invoice</button></div>`;
+  const bill = stBillOk() ? '' : `<div class="lock"><b>Add your billing details first</b><span class="meta">Your name, address and UPI ID or bank account are printed on every invoice. You can still write drafts.</span><div><button class="pill" data-act="nav" data-v="account">Add billing details</button></div></div>`;
+  if(!list.length) return head + bill + `<div class="panel"><h3>No invoices yet</h3><p class="meta">Create one from a collaboration, or start a blank invoice. Brands get a link they can open and pay from.</p></div>`;
+  return head + bill + list.map(i=>{
+    const k = 'void:' + i.id;
+    const acts = i.status==='draft' ? `<button class="pill" data-act="st-iopen" data-v="${esc(i.id)}">Edit</button><button class="pill" data-act="st-isend" data-v="${esc(i.id)}" aria-pressed="true">Send to brand</button>${st.confirm===k?'':`<button class="pill" data-act="st-ask" data-v="${esc(k)}">Void</button>`}`
+      : i.status==='sent' ? `<button class="pill" data-act="st-icopy" data-v="${esc(i.id)}">Copy link</button><button class="pill" data-act="st-iview" data-v="${esc(i.id)}">View</button>${i.buyer&&i.buyer.email?`<button class="pill" data-act="st-irem" data-v="${esc(i.id)}">Send reminder</button>`:''}<button class="pill" data-act="st-ipaid" data-v="${esc(i.id)}" aria-pressed="true">Mark as paid</button>${st.confirm===k?'':`<button class="pill" data-act="st-ask" data-v="${esc(k)}">Void</button>`}`
+      : i.status==='paid' ? `<button class="pill" data-act="st-iview" data-v="${esc(i.id)}">View</button><button class="pill" data-act="st-iunpaid" data-v="${esc(i.id)}">Undo paid</button>` : '';
+    const meta = [i.issue_date?'Issued '+stDate(i.issue_date):'', i.due_date&&i.status!=='paid'&&i.status!=='void'?'Due '+stDate(i.due_date):'', i.status==='paid'&&i.paid_at?'Paid '+stDate(stIST(i.paid_at)):''].filter(Boolean).join(' · ');
+    const extra = [i.viewed_at ? 'Viewed by the brand on ' + stDate(stIST(i.viewed_at)) : '', i.last_reminder_at ? 'Last reminder ' + stDate(stIST(i.last_reminder_at)) + (i.reminders_sent ? ' (' + i.reminders_sent + ' sent)' : '') : ''].filter(Boolean).join(' · ');
+    return `<article class="st-card"><div class="st-top"><b>${esc(i.number||'Draft')} · ${esc((i.buyer||{}).name||'')}</b>${stInvChip(i)}</div>
+      <div class="st-row"><span class="meta">${meta}</span><b>${rs(i.total)}</b></div>${extra?`<p class="meta">${extra}</p>`:''}
+      ${i.status==='sent'?`<p class="st-link">${esc(stInvLink(i))}</p>`:''}
+      <div class="st-acts">${acts}</div>${stConfirmHTML(k, 'Void this invoice? It cannot be used again.', 'Yes, void')}</article>`;
+  }).join('');
+}
+function stInvBlank(){ const d = todayIN(); return {id:null, collab_id:null, number:'', buyer:{name:'', address:'', gstin:'', email:'', state:''}, issue_date:d, due_date:stAdd(d,15), items:[{desc:'', qty:1, rate:''}], gst_type:'none', notes:'', auto_remind:true, status:'draft'}; }
+function stInvFromRow(i){ return {id:i.id, collab_id:i.collab_id, number:i.number||'', buyer:Object.assign({name:'', address:'', gstin:'', email:'', state:''}, i.buyer||{}), issue_date:i.issue_date||todayIN(), due_date:i.due_date||'', items:(i.items||[]).map(x=>({desc:x.desc||'', qty:x.qty, rate:x.rate})), gst_type:i.gst_type||'none', notes:i.notes||'', auto_remind:i.auto_remind!==false, status:i.status, token:i.token}; }
+function stTotHTML(e){
+  const t = stCalc(e.items, e.gst_type);
+  return `<div><span>Subtotal</span><span>${rs(t.sub)}</span></div>${e.gst_type==='cgst_sgst'?`<div><span>CGST 9% + SGST 9%</span><span>${rs(t.gst)}</span></div>`:e.gst_type==='igst'?`<div><span>IGST 18%</span><span>${rs(t.gst)}</span></div>`:''}<div class="big-t"><span>Total</span><span>${rs(t.total)}</span></div>`;
+}
+function stInvEditor(){
+  const e = S.st.edit.inv || stInvBlank(), b = e.buyer || {}, v = x => esc(x==null?'':x);
+  const items = e.items.map((it, n)=>`<div class="st-item"><label class="st-desc">Item ${n+1}<input data-sf="inv.items.${n}.desc" maxlength="200" placeholder="e.g. Instagram reel — Diwali campaign" value="${v(it.desc)}"></label>
+    <label>Qty<input type="number" min="0" step="1" data-sf="inv.items.${n}.qty" data-t="num" data-tot="1" value="${v(it.qty)}"></label>
+    <label>Rate ₹<input type="number" min="0" step="1" data-sf="inv.items.${n}.rate" data-t="num" data-tot="1" value="${v(it.rate)}"></label>
+    <span class="st-amt" data-amt="${n}">${rs(Math.round(stNum(it.qty)*stNum(it.rate)))}${e.items.length>1?` <button type="button" class="link" data-act="st-idel" data-v="${n}" aria-label="Remove item ${n+1}">Remove</button>`:''}</span></div>`).join('');
+  return `<form id="stInvForm" class="panel st-form" novalidate>
+    <button type="button" class="link" data-act="st-back">‹ Back to invoices</button>
+    <h2>${e.id?'Edit invoice':'New invoice'}</h2>
+    ${stBillOk()?'':`<div class="lock"><b>Add your billing details before sending</b><span class="meta">Your legal name and a UPI ID or bank account are needed on the invoice.</span><div><button type="button" class="pill" data-act="nav" data-v="account">Add billing details</button></div></div>`}
+    <b>Bill to</b>
+    <div class="two"><label>Brand or company name<input data-sf="inv.buyer.name" maxlength="100" value="${v(b.name)}"></label><label>Brand email (for sending)<input type="email" data-sf="inv.buyer.email" maxlength="120" value="${v(b.email)}"></label></div>
+    <label>Address (optional)<textarea data-sf="inv.buyer.address" rows="2" maxlength="300">${v(b.address)}</textarea></label>
+    <div class="two"><label>State (optional)<input data-sf="inv.buyer.state" maxlength="40" value="${v(b.state)}"></label><label>Brand GSTIN (optional)<input data-sf="inv.buyer.gstin" maxlength="15" autocapitalize="characters" value="${v(b.gstin)}"></label></div>
+    <div class="two"><label>Issue date<input type="date" data-sf="inv.issue_date" value="${v(e.issue_date)}"></label><label>Due date<input type="date" data-sf="inv.due_date" value="${v(e.due_date)}"></label></div>
+    <label>Invoice number (optional)<input data-sf="inv.number" maxlength="30" placeholder="Leave empty for automatic numbering" value="${v(e.number)}"></label>
+    <b>Items</b><div class="st-items">${items}</div>
+    ${e.items.length<20?`<div><button type="button" class="pill" data-act="st-iadd">Add an item</button></div>`:''}
+    <label>GST<select data-sf="inv.gst_type" data-tot="1">${ST_GST.map(([a,t])=>`<option value="${a}"${e.gst_type===a?' selected':''}>${t}</option>`).join('')}</select></label>
+    <p class="meta">If you are registered for GST: same state as the brand → CGST+SGST, different state → IGST. Not registered → No GST.</p>
+    <div class="st-tot" id="stInvTot">${stTotHTML(e)}</div>
+    <label>Notes (optional)<textarea data-sf="inv.notes" rows="2" maxlength="500" placeholder="e.g. Thank you for working with me.">${v(e.notes)}</textarea></label>
+    <label style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input type="checkbox" data-sf="inv.auto_remind" data-t="bool" style="width:auto"${e.auto_remind?' checked':''}> Remind the brand automatically if it is not paid by the due date</label>
+    <p class="meta" id="stiErr" hidden></p>
+    <div class="st-acts"><button class="btn" type="submit">Save draft</button><button type="button" class="btn accent" data-act="st-isend" data-v="${e.id?esc(e.id):''}"${stBillOk()?'':' disabled'}>Send to brand</button><button type="button" class="btn ghost" data-act="st-back">Cancel</button></div>
+  </form>`;
+}
+function stInvCheck(e){
+  if(!stTxt(e.buyer.name)) return 'Add the brand or company name.';
+  if(e.buyer.email && !ST_EMAIL.test(String(e.buyer.email).trim())) return 'Check the brand email.';
+  if(!e.items.length || e.items.length>20) return 'Add between 1 and 20 items.';
+  for(const it of e.items){ if(!stTxt(it.desc)) return 'Describe every item.'; if(!(stNum(it.qty)>0)) return 'Quantity must be more than 0.'; if(stNum(it.rate)<0) return 'Rate cannot be negative.'; }
+  if(e.due_date && e.issue_date && e.due_date < e.issue_date) return 'The due date is before the issue date.';
+  return '';
+}
+function stInvPayload(e){
+  const b = e.buyer;
+  return {collab_id:e.collab_id||null, number:stTxt(e.number), buyer:{name:stTxt(b.name), address:stTxt(b.address), gstin:stTxt(b.gstin)?String(b.gstin).trim().toUpperCase():null, email:stTxt(b.email), state:stTxt(b.state)},
+    items:e.items.map(it=>({desc:String(it.desc).trim(), qty:stNum(it.qty), rate:stNum(it.rate)})), gst_type:e.gst_type||'none', issue_date:e.issue_date||null, due_date:e.due_date||null, notes:stTxt(e.notes), auto_remind:!!e.auto_remind};
+}
+async function stInvSave(){
+  const e = S.st.edit.inv, err = stInvCheck(e);
+  if(err){ const p = $('stiErr'); if(p){ p.textContent = err; p.hidden = false; } else toast(err); return null; }
+  const p = stInvPayload(e);
+  const row = e.id ? await q(sb.from('invoices').update(p).eq('id', e.id).select().single())
+    : await q(sb.from('invoices').insert({creator_id:S.user.id, ...p}).select().single());
+  e.id = row.id; e.token = row.token; e.number = row.number || e.number;
+  return row;
+}
+async function stInvSend(id){
+  const st = S.st;
+  if(!stBillOk()) return toast('Add your billing details before sending.');
+  let inv = id ? st.invoices.find(i=>i.id===id) : null;
+  if(st.mode==='inv'){ const row = await stInvSave(); if(!row) return; inv = row; }
+  if(!inv) return;
+  await q(sb.from('invoices').update({status:'sent'}).eq('id', inv.id));
+  const email = inv.buyer && inv.buyer.email;
+  let msg = 'Marked as sent. Copy the link to share it with the brand.';
+  if(email){ const r = await q(sb.rpc('send_invoice_email', {p_invoice:inv.id, p_kind:'send'})); msg = r==='sent' ? 'Invoice sent to ' + email : 'Marked as sent. ' + r; }
+  st.mode = null; st.edit.inv = null; st.tab = 'invoices';
+  await stReload(msg);
+  if(S.arg!=='invoices') go('studio', 'invoices');
+}
+
+/* ---------- 3. earnings ---------- */
+function stRecords(){
+  const st = S.st, rows = [], invBy = {};
+  st.invoices.forEach(i=>{ if(i.collab_id && i.status==='paid') invBy[i.collab_id] = i.number; });
+  st.collabs.forEach(c=>{
+    if(c.status==='paid') rows.push({date:stIST(c.paid_at) || c.post_date || stIST(c.updated_at), brand:c.brand_name, title:c.title, source:'Collaboration', kind:ST_KIND[c.kind]||'Other', amount:c.fee||0, product:c.product_value||0, invoice:invBy[c.id]||'', paid:true});
+    else if(c.status==='posted' && c.product_value) rows.push({date:c.post_date || stIST(c.updated_at), brand:c.brand_name, title:c.title, source:'Collaboration', kind:ST_KIND[c.kind]||'Other', amount:0, product:c.product_value, invoice:'', paid:false});
+  });
+  st.invoices.forEach(i=>{ if(!i.collab_id && i.status==='paid') rows.push({date:stIST(i.paid_at) || i.issue_date, brand:(i.buyer||{}).name||'', title:((i.items||[])[0]||{}).desc||'', source:'Invoice', kind:'Invoice', amount:i.total||0, product:0, invoice:i.number||'', paid:true}); });
+  (S.apps||[]).forEach(a=>{ const b = a.briefs; if(!b || a.status!=='paid') return; const prod = b.comp==='product' || b.comp==='both';
+    rows.push({date:stIST(a.updated_at || a.created_at), brand:b.brand_name, title:b.title, source:'Boli', kind:'Boli deal', amount:b.comp==='product'?0:(b.pay||0), product:prod?(b.product_value||0):0, invoice:'', paid:true}); });
+  return rows.filter(r=>r.date);
+}
+function stPending(){
+  const st = S.st, inv = st.invoices.filter(i=>i.status==='sent');
+  const withInv = new Set(inv.map(i=>i.collab_id).filter(Boolean));
+  return inv.reduce((t,i)=>t+(i.total||0), 0) + st.collabs.filter(c=>['agreed','shooting','sent','posted'].includes(c.status) && !withInv.has(c.id)).reduce((t,c)=>t+(c.fee||0), 0);
+}
+function stEarnings(){
+  const st = S.st, all = stRecords(), cur = stFY(todayIN());
+  const fys = [...new Set([cur, ...all.map(r=>stFY(r.date))])].sort().reverse();
+  const fy = fys.includes(st.fy) ? st.fy : cur;
+  const rows = all.filter(r=>stFY(r.date)===fy).sort((a,b)=>a.date<b.date?-1:1);
+  const earned = rows.reduce((t,r)=>t+r.amount, 0), prod = rows.reduce((t,r)=>t+r.product, 0);
+  const paid = rows.filter(r=>r.paid && r.amount>0).length;
+  const months = ST_MONTHS.map(()=>0); rows.forEach(r=>{ const m = +r.date.slice(5,7); months[(m+8)%12] += r.amount; });
+  const max = Math.max(1, ...months);
+  const brands = {}, kinds = {}; rows.forEach(r=>{ if(!r.amount) return; brands[r.brand] = (brands[r.brand]||0) + r.amount; kinds[r.kind] = (kinds[r.kind]||0) + r.amount; });
+  const tbl = (o, h) => { const e = Object.entries(o).sort((a,b)=>b[1]-a[1]).slice(0,8); return e.length ? `<table class="st-table"><thead><tr><th>${h}</th><th>Earned</th></tr></thead><tbody>${e.map(([k,v])=>`<tr><td>${esc(k)}</td><td>${rs(v)}</td></tr>`).join('')}</tbody></table>` : '<p class="meta">Nothing earned yet in this year.</p>'; };
+  const tile = (v, l) => `<div class="st-tile"><b>${v}</b><span>${l}</span></div>`;
+  return `<div class="st-row"><h2>Earnings</h2><button class="pill" data-act="st-csv" data-v="${esc(fy)}">Download CSV</button></div>
+    <div class="st-filters" role="group" aria-label="Financial year">${fys.map(f=>`<button class="pill" data-act="st-fy" data-v="${esc(f)}" aria-pressed="${f===fy}">FY ${esc(f)}</button>`).join('')}</div>
+    <div class="st-sum">${tile(rs(earned),'Earned in FY '+esc(fy))}${tile(rs(stPending()),'Pending now')}${tile(rs(prod),'Products received')}${tile(num(paid),'Paid deals')}${tile(rs(paid?Math.round(earned/paid):0),'Average per deal')}</div>
+    <div class="panel"><b>Month by month</b><div class="st-bars" role="img" aria-label="Earnings by month">${months.map((v,n)=>`<div class="st-bar"><em>${v?rs(v):''}</em><i class="${v?'':'zero'}" style="height:${v?Math.max(3, Math.round(v/max*120)):2}px"></i><span>${ST_MONTHS[n]}</span></div>`).join('')}</div></div>
+    <div class="split"><div class="panel"><b>Top brands</b>${tbl(brands,'Brand')}</div><div class="panel"><b>By type</b>${tbl(kinds,'Type')}</div></div>
+    <p class="meta">For your records. Check tax questions with your CA.</p>`;
+}
+function stCSV(fy){
+  const rows = stRecords().filter(r=>stFY(r.date)===fy).sort((a,b)=>a.date<b.date?-1:1);
+  const c = x => { const s = String(x==null?'':x); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
+  const lines = [['date','brand','title','source','amount','product value','invoice number'].join(',')].concat(rows.map(r=>[r.date, r.brand, r.title, r.source, r.amount, r.product, r.invoice].map(c).join(',')));
+  return lines.join('\n') + '\n';
+}
+
+/* ---------- 4. enquiries ---------- */
+function stEnquiries(){
+  const st = S.st, list = st.enquiries;
+  if(!list.length) return `<h2>Enquiries</h2><div class="panel"><h3>No enquiries yet</h3><p class="meta">Brands can send you an enquiry from the "Work with me" button on your public profile. Put your Boli profile link in your Instagram bio so brands find it.</p>${S.me && S.me.public_on ? '' : '<div><button class="pill" data-act="nav" data-v="account">Switch on your public profile</button></div>'}</div>`;
+  return `<h2>Enquiries</h2>` + list.map(e=>{
+    const k = 'enq:' + e.id;
+    const chip = e.status==='new' ? '<span class="tag">New</span>' : e.status==='converted' ? '<span class="tag ok">Added to collaborations</span>' : '<span class="tag st-mute">Declined</span>';
+    return `<article class="st-card"><div class="st-top"><b>${esc(e.brand_name)}</b>${chip}</div>
+      <p class="meta">${esc(e.contact_name||'')}${e.contact_name?' · ':''}<a class="link" href="mailto:${esc(e.email)}">${esc(e.email)}</a>${e.phone?` · <a class="link" href="tel:${esc(String(e.phone).replace(/[^0-9+]/g,''))}">${esc(e.phone)}</a>`:''}</p>
+      ${e.budget?`<p><b>Budget ${rs(e.budget)}</b></p>`:''}<div class="st-msg">${esc(e.message)}</div><p class="meta">${stDate(stIST(e.created_at))}</p>
+      <div class="st-acts">${e.status==='new'?`<button class="pill" data-act="st-econv" data-v="${esc(e.id)}" aria-pressed="true">Add to collaborations</button><button class="pill" data-act="st-edecl" data-v="${esc(e.id)}">Decline</button>`:''}${st.confirm===k?'':`<button class="pill" data-act="st-ask" data-v="${esc(k)}">Delete</button>`}</div>
+      ${stConfirmHTML(k, 'Delete this enquiry?', 'Yes, delete')}</article>`;
+  }).join('');
+}
+
+/* ---------- 5. agreements ---------- */
+const ST_USAGE = [[0,'Repost or share only'],[3,'3 months'],[6,'6 months'],[12,'12 months'],[24,'24 months']];
+const ST_EXCL = [[0,'None'],[7,'7 days'],[15,'15 days'],[30,'30 days'],[60,'60 days'],[90,'90 days']];
+const ST_REV = [[0,'None'],[1,'1 round'],[2,'2 rounds'],[3,'3 rounds']];
+const ST_PAYD = [[7,'7 days'],[15,'15 days'],[30,'30 days'],[45,'45 days']];
+function stAgrBlank(c){ c = c || {}; return {id:null, collab_id:c.id||null, status:'draft', terms:{brand_name:c.brand_name||'', title:c.title||'', deliverables:c.deliverables||'', post_date:c.post_date||'', fee:c.fee||0, product_note:c.product_note||'', product_value:c.product_value||0, usage_months:3, exclusivity_days:0, revisions:1, payment_days:15, extra:''}}; }
+function stAgrPreview(t){
+  if(typeof agreementText==='function'){ try{ return agreementText(t, {creator:S.me.name, brand:t.brand_name}); }catch(e){} }
+  const li = x => `<li>${x}</li>`;
+  return `<ol>${[li(`Parties: ${esc(S.me.name)} (creator) and ${esc(t.brand_name)} (brand).`), li(`Work: ${esc(t.title)}${t.deliverables?' — '+esc(t.deliverables):''}${t.post_date?', posting on '+stDate(t.post_date):''}.`),
+    li(`Fee: ${rs(t.fee)}${t.product_note?' plus '+esc(t.product_note):''}, paid within ${num(t.payment_days)} days of posting.`), li(`Usage rights: ${t.usage_months?num(t.usage_months)+' months':'repost or share only'}. Exclusivity: ${t.exclusivity_days?num(t.exclusivity_days)+' days':'none'}. Revisions: ${num(t.revisions)}.`),
+    t.extra?li(esc(t.extra)):''].join('')}</ol>`;
+}
+function stAgrEditor(){
+  const e = S.st.edit.agr || stAgrBlank(), t = e.terms, v = x => esc(x==null?'':x), ro = e.status!=='draft';
+  const sel = (k, opts) => `<select data-sf="agr.terms.${k}" data-t="int" data-prev="1"${ro?' disabled':''}>${opts.map(([a,b])=>`<option value="${a}"${+t[k]===a?' selected':''}>${b}</option>`).join('')}</select>`;
+  const dis = ro ? ' disabled' : '';
+  const status = e.status==='accepted' ? `<div class="lock"><b>Accepted${e.brand_signed_name?' by '+esc(e.brand_signed_name):''}${e.brand_signed_at?' on '+stDate(stIST(e.brand_signed_at)):''}</b>${e.brand_signed_email?`<span class="meta">${esc(e.brand_signed_email)}</span>`:''}</div>`
+    : e.status==='sent' ? `<div class="lock"><b>Signed by you and sent. Waiting for the brand to accept.</b><span class="st-link">${esc(location.origin + '/#/a/' + (e.token||''))}</span><div><button type="button" class="pill" data-act="st-acopy">Copy link</button></div></div>` : '';
+  const k = 'avoid:' + (e.id||'');
+  return `<form id="stAgrForm" class="panel st-form" novalidate>
+    <button type="button" class="link" data-act="st-back">‹ Back to collaborations</button>
+    <h2>Collaboration agreement</h2>${status}
+    <div class="two"><label>Brand<input data-sf="agr.terms.brand_name" data-prev="1" maxlength="100" value="${v(t.brand_name)}"${dis}></label><label>Work<input data-sf="agr.terms.title" data-prev="1" maxlength="150" value="${v(t.title)}"${dis}></label></div>
+    <label>Deliverables<textarea data-sf="agr.terms.deliverables" data-prev="1" rows="3" maxlength="1000"${dis}>${v(t.deliverables)}</textarea></label>
+    <div class="two"><label>Posting date<input type="date" data-sf="agr.terms.post_date" data-prev="1" value="${v(t.post_date)}"${dis}></label><label>Fee in ₹<input type="number" min="0" step="100" data-sf="agr.terms.fee" data-t="int" data-prev="1" value="${v(t.fee)}"${dis}></label></div>
+    <div class="two"><label>Product (optional)<input data-sf="agr.terms.product_note" data-prev="1" maxlength="150" value="${v(t.product_note)}"${dis}></label><label>Product value in ₹<input type="number" min="0" data-sf="agr.terms.product_value" data-t="int" data-prev="1" value="${v(t.product_value)}"${dis}></label></div>
+    <div class="two"><label>Usage rights${sel('usage_months', ST_USAGE)}</label><label>Exclusivity${sel('exclusivity_days', ST_EXCL)}</label></div>
+    <div class="two"><label>Revisions${sel('revisions', ST_REV)}</label><label>Payment within${sel('payment_days', ST_PAYD)}</label></div>
+    <label>Extra terms (optional)<textarea data-sf="agr.terms.extra" data-prev="1" rows="2" maxlength="1000"${dis}>${v(t.extra)}</textarea></label>
+    <b>Preview</b><div class="st-prev" id="stAgrPrev">${stAgrPreview(t)}</div>
+    <p class="meta" id="staErr" hidden></p>
+    <div class="st-acts">${ro?'':`<button class="btn" type="submit">Save draft</button><button type="button" class="btn accent" data-act="st-asend">Sign and send</button>`}
+      ${e.id && e.status!=='void' && e.status!=='accepted' && S.st.confirm!==k ? `<button type="button" class="btn ghost" data-act="st-ask" data-v="${esc(k)}">Void</button>` : ''}
+      <button type="button" class="btn ghost" data-act="st-back">${ro?'Close':'Cancel'}</button></div>
+    ${stConfirmHTML(k, 'Void this agreement?', 'Yes, void')}
+  </form>`;
+}
+function stAgrTerms(t){
+  return {brand_name:String(t.brand_name||'').trim(), title:String(t.title||'').trim(), deliverables:String(t.deliverables||'').trim(), post_date:t.post_date||null, fee:stInt(t.fee), product_note:String(t.product_note||'').trim(), product_value:stInt(t.product_value),
+    usage_months:stInt(t.usage_months), exclusivity_days:stInt(t.exclusivity_days), revisions:stInt(t.revisions), payment_days:stInt(t.payment_days), extra:String(t.extra||'').trim()};
+}
+async function stAgrSave(){
+  const e = S.st.edit.agr, t = stAgrTerms(e.terms);
+  if(!t.brand_name || !t.title){ const p = $('staErr'); if(p){ p.textContent = 'Add the brand and the work.'; p.hidden = false; } return null; }
+  const row = e.id ? await q(sb.from('agreements').update({terms:t}).eq('id', e.id).select().single())
+    : await q(sb.from('agreements').insert({creator_id:S.user.id, collab_id:e.collab_id||null, terms:t}).select().single());
+  e.id = row.id; e.token = row.token;
+  return row;
+}
+
+/* ---------- state binding ---------- */
+function stSet(path, val){
+  const parts = path.split('.'); let o = S.st.edit;
+  for(let i=0;i<parts.length-1;i++){ const k = parts[i]; if(o[k]==null) o[k] = /^\d+$/.test(parts[i+1]) ? [] : {}; o = o[k]; }
+  o[parts[parts.length-1]] = val;
+}
+document.addEventListener('input', stBind); document.addEventListener('change', stBind);
+function stBind(ev){
+  const el = ev.target; if(!el || !el.dataset || !el.dataset.sf || S.view!=='studio') return;
+  const t = el.dataset.t;
+  let val = t==='bool' ? el.checked : el.value;
+  if(t==='int' && el.tagName==='SELECT') val = stInt(val);
+  if(el.dataset.sf==='inv.buyer.gstin'){ const up = el.value.toUpperCase(); if(up!==el.value){ const p = el.selectionStart; el.value = up; try{ el.setSelectionRange(p,p); }catch(e){} } val = up; }
+  stSet(el.dataset.sf, val);
+  if(el.dataset.tot){ const e = S.st.edit.inv; const tot = $('stInvTot'); if(tot && e) tot.innerHTML = stTotHTML(e);
+    const m = el.dataset.sf.match(/^inv\.items\.(\d+)\./); if(m){ const it = e.items[+m[1]], a = document.querySelector(`[data-amt="${m[1]}"]`); if(a && a.firstChild) a.firstChild.nodeValue = rs(Math.round(stNum(it.qty)*stNum(it.rate))) + (e.items.length>1?' ':''); } }
+  if(el.dataset.prev){ const p = $('stAgrPrev'); if(p && S.st.edit.agr) p.innerHTML = stAgrPreview(S.st.edit.agr.terms); }
+}
+function stRender(){ const y = window.scrollY; render(); window.scrollTo(0, y); }
+function stOpenMode(mode, tab){ const st = S.st; st.mode = mode; st.confirm = null; if(S.arg!==tab){ st.tab = tab; go('studio', tab); } else { render(); } window.scrollTo(0,0); }
+
+/* ---------- events ---------- */
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest('[data-act^="st-"]'); if(!el || el.disabled) return;
+  const a = el.dataset.act, v = el.dataset.v, st = stS();
+  if(a==='st-tab'){ st.confirm = null; if(st.mode && !((st.mode==='inv' && v==='invoices') || ((st.mode==='collab'||st.mode==='agr') && v==='board'))) st.mode = null; return go('studio', v); }
+  if(a==='st-filter'){ st.filter = v; return stRender(); }
+  if(a==='st-canc'){ st.showCancelled = !st.showCancelled; return stRender(); }
+  if(a==='st-fy'){ st.fy = v; return stRender(); }
+  if(a==='st-ask'){ st.confirm = v; return stRender(); }
+  if(a==='st-no'){ st.confirm = null; return stRender(); }
+  if(a==='st-back'){ st.mode = null; st.confirm = null; return stRender(); }
+  if(a==='st-cnew'){ st.edit.collab = {platform:'instagram', kind:'reel', status:'agreed', fee:'', product_value:''}; return stOpenMode('collab', 'board'); }
+  if(a==='st-cedit'){ const c = st.collabs.find(x=>x.id===v); if(!c) return; st.edit.collab = {...c}; return stOpenMode('collab', 'board'); }
+  if(a==='st-next') return run(async()=>{ await q(sb.from('collabs').update({status:el.dataset.s}).eq('id', v)); await stReload('Moved to ' + stLabel(el.dataset.s)); });
+  if(a==='st-inew'){ const c = v ? st.collabs.find(x=>x.id===v) : null; const e = stInvBlank();
+    if(c){ e.collab_id = c.id; e.buyer.name = c.brand_name || ''; e.buyer.email = c.brand_email || ''; e.items = [{desc:(ST_KIND[c.kind]||'Work') + ' — ' + c.title, qty:1, rate:c.fee||0}]; }
+    st.edit.inv = e; return stOpenMode('inv', 'invoices'); }
+  if(a==='st-iopen'){ const i = st.invoices.find(x=>x.id===v); if(!i) return; if(i.status!=='draft'){ st.mode = null; return go('i', i.token); } st.edit.inv = stInvFromRow(i); return stOpenMode('inv', 'invoices'); }
+  if(a==='st-iadd'){ const e = st.edit.inv; if(e && e.items.length<20){ e.items.push({desc:'', qty:1, rate:''}); stRender(); } return; }
+  if(a==='st-idel'){ const e = st.edit.inv; if(e && e.items.length>1){ e.items.splice(+v, 1); stRender(); } return; }
+  if(a==='st-isend') return run(()=>stInvSend(v || null));
+  if(a==='st-icopy'){ const i = st.invoices.find(x=>x.id===v); if(i) stCopy(stInvLink(i)); return; }
+  if(a==='st-iview'){ const i = st.invoices.find(x=>x.id===v); if(i) go('i', i.token); return; }
+  if(a==='st-irem') return run(async()=>{ const r = await q(sb.rpc('send_invoice_email', {p_invoice:v, p_kind:'reminder'})); await stReload(r==='sent' ? 'Reminder sent' : String(r||'Could not send the reminder.')); });
+  if(a==='st-ipaid') return run(async()=>{ await q(sb.from('invoices').update({status:'paid'}).eq('id', v)); await stReload('Marked as paid'); });
+  if(a==='st-iunpaid') return run(async()=>{ await q(sb.from('invoices').update({status:'sent'}).eq('id', v)); await stReload('Marked as not paid'); });
+  if(a==='st-csv'){ const blob = new Blob([stCSV(v)], {type:'text/csv;charset=utf-8'}); const u = URL.createObjectURL(blob); const l = document.createElement('a'); l.href = u; l.download = 'boli-earnings-' + v + '.csv'; document.body.appendChild(l); l.click(); l.remove(); setTimeout(()=>URL.revokeObjectURL(u), 1000); return; }
+  if(a==='st-econv') return run(async()=>{ const e = st.enquiries.find(x=>x.id===v); if(!e) return;
+    const row = await q(sb.from('collabs').insert({creator_id:S.user.id, source:'enquiry', enquiry_id:e.id, status:'lead', brand_name:e.brand_name, contact_name:e.contact_name||null, brand_email:e.email||null, brand_phone:e.phone||null, fee:e.budget||0, title:String(e.message||'Enquiry').slice(0,60)}).select().single());
+    await q(sb.from('enquiries').update({status:'converted', collab_id:row.id}).eq('id', e.id));
+    await stReload('Added to your collaborations as a lead'); });
+  if(a==='st-edecl') return run(async()=>{ await q(sb.from('enquiries').update({status:'declined'}).eq('id', v)); await stReload('Enquiry declined'); });
+  if(a==='st-anew'){ const c = st.collabs.find(x=>x.id===v); st.edit.agr = stAgrBlank(c); return stOpenMode('agr', 'board'); }
+  if(a==='st-aopen'){ const g = st.agreements.find(x=>x.id===v); if(!g) return; st.edit.agr = {id:g.id, collab_id:g.collab_id, status:g.status, token:g.token, terms:Object.assign(stAgrBlank().terms, g.terms||{}), brand_signed_name:g.brand_signed_name, brand_signed_email:g.brand_signed_email, brand_signed_at:g.brand_signed_at}; return stOpenMode('agr', 'board'); }
+  if(a==='st-acopy'){ const e = st.edit.agr; if(e && e.token) stCopy(location.origin + '/#/a/' + e.token); return; }
+  if(a==='st-asend') return run(async()=>{ const row = await stAgrSave(); if(!row) return;
+    await q(sb.from('agreements').update({status:'sent'}).eq('id', row.id));
+    const c = st.collabs.find(x=>x.id===st.edit.agr.collab_id);
+    let msg = 'Signed and sent. Copy the link to share it with the brand.';
+    if(c && c.brand_email){ const r = await q(sb.rpc('send_agreement_email', {p_agreement:row.id})); msg = r==='sent' ? 'Agreement sent to ' + c.brand_email : 'Signed. ' + r; }
+    await stLoad(); const g = st.agreements.find(x=>x.id===row.id);
+    if(g) st.edit.agr = {id:g.id, collab_id:g.collab_id, status:g.status, token:g.token, terms:Object.assign(stAgrBlank().terms, g.terms||{})};
+    stRender(); toast(msg); });
+  if(a==='st-yes') return run(async()=>{ const [kind, id] = String(v).split(':'); st.confirm = null;
+    if(kind==='collab'){ await q(sb.from('collabs').delete().eq('id', id)); return stReload('Collaboration deleted'); }
+    if(kind==='void'){ await q(sb.from('invoices').update({status:'void'}).eq('id', id)); return stReload('Invoice voided'); }
+    if(kind==='enq'){ await q(sb.from('enquiries').delete().eq('id', id)); return stReload('Enquiry deleted'); }
+    if(kind==='avoid' && id){ await q(sb.from('agreements').update({status:'void'}).eq('id', id)); st.mode = null; return stReload('Agreement voided'); } });
+});
+document.addEventListener('submit', ev=>{
+  const id = ev.target.id; if(id!=='stCollabForm' && id!=='stInvForm' && id!=='stAgrForm') return; ev.preventDefault();
+  const st = stS();
+  if(id==='stCollabForm') return run(async()=>{
+    const e = st.edit.collab || {}, p = stCollabPayload(e), err = $('stcErr');
+    const bad = !p.brand_name ? 'Add the brand name.' : !p.title ? 'Say what the deal is.' : (p.brand_email && !ST_EMAIL.test(p.brand_email)) ? 'Check the brand email.' : '';
+    if(bad){ if(err){ err.textContent = bad; err.hidden = false; } return; }
+    if(e.id) await q(sb.from('collabs').update(p).eq('id', e.id)); else await q(sb.from('collabs').insert({creator_id:S.user.id, ...p}));
+    st.mode = null; st.edit.collab = null; await stReload(e.id ? 'Collaboration saved' : 'Collaboration added');
+  });
+  if(id==='stInvForm') return run(async()=>{ const row = await stInvSave(); if(!row) return; st.mode = null; st.edit.inv = null; await stReload('Draft saved'); });
+  if(id==='stAgrForm') return run(async()=>{ const row = await stAgrSave(); if(!row) return; await stLoad(); stRender(); toast('Draft saved'); });
+});
+</script>
+
+<!-- part_public -->
+<style>
+/* ---------- part_public: invoice, agreement, enquiry (pages brands see) ---------- */
+.pb-wrap{max-width:860px;margin:0 auto;width:100%;display:flex;flex-direction:column;gap:16px;padding-bottom:40px}
+.pb-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.pb-bar .pb-acts{display:flex;flex-wrap:wrap;gap:8px}
+.pb-paper{position:relative;overflow:hidden;background:#ffffff;color:#16161d;border-radius:18px;padding:28px;box-shadow:0 1px 2px rgba(0,0,0,.06),0 8px 30px rgba(0,0,0,.06);font-size:.92rem;line-height:1.45;color-scheme:light}
+.pb-paper *{border-color:#e4e4ea}
+.pb-paper .pb-mut{color:#62626e}
+.pb-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:2px solid #16161d;padding-bottom:14px}
+.pb-head h1{font-size:1.7rem;font-weight:800;color:#16161d;letter-spacing:-.02em}
+.pb-meta{display:grid;grid-template-columns:auto auto;gap:2px 14px;font-size:.86rem;text-align:left}
+.pb-meta span:nth-child(odd){color:#62626e}
+.pb-meta b{font-weight:600}
+.pb-parties{display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px}
+@media (min-width:640px){.pb-parties{grid-template-columns:1fr 1fr}}
+.pb-party h3{font-size:.72rem;text-transform:uppercase;letter-spacing:.09em;color:#62626e;margin-bottom:4px;font-family:var(--body);font-weight:700}
+.pb-party b{display:block;font-size:1rem}
+.pb-party p{white-space:pre-line;overflow-wrap:anywhere}
+.pb-tblw{overflow-x:auto;margin-top:18px;-webkit-overflow-scrolling:touch}
+.pb-tbl{width:100%;border-collapse:collapse;font-size:.88rem;min-width:420px}
+.pb-tbl th{background:#f3f3f7;text-align:left;font-weight:600;padding:8px 10px;border-bottom:1px solid #e4e4ea;font-size:.8rem}
+.pb-tbl td{padding:9px 10px;border-bottom:1px solid #e4e4ea;vertical-align:top;overflow-wrap:anywhere}
+.pb-tbl .n{text-align:right;white-space:nowrap}
+@media (max-width:560px){.pb-paper{padding:20px 16px}.pb-tbl{min-width:0;font-size:.8rem}.pb-tbl th,.pb-tbl td{padding:7px 5px}.pb-tbl .pb-ix{display:none}}
+.pb-wrap a.btn{text-decoration:none}
+.pb-sum{margin-left:auto;margin-top:12px;width:100%;max-width:340px;display:flex;flex-direction:column;gap:4px;font-size:.9rem}
+.pb-sum div{display:flex;justify-content:space-between;gap:12px}
+.pb-sum .pb-tot{border-top:2px solid #16161d;padding-top:8px;margin-top:4px;font-size:1.08rem;font-weight:700}
+.pb-words{margin-top:12px;padding:10px 12px;background:#f6f6f9;border-radius:10px;font-size:.86rem}
+.pb-notes{margin-top:12px;font-size:.86rem;white-space:pre-line;overflow-wrap:anywhere}
+.pb-foot{margin-top:18px;padding-top:10px;border-top:1px solid #e4e4ea;font-size:.78rem;color:#62626e;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px}
+.pb-ribbon{position:absolute;top:22px;right:-46px;transform:rotate(35deg);background:#0f7a57;color:#fff;font-weight:800;letter-spacing:.14em;padding:6px 56px;font-size:.82rem}
+.pb-pay{display:flex;flex-direction:column;gap:12px}
+.pb-paygrid{display:grid;grid-template-columns:1fr;gap:14px}
+@media (min-width:640px){.pb-paygrid{grid-template-columns:1fr 1fr}}
+.pb-qr{width:168px;height:168px;background:#ffffff;border-radius:12px;padding:6px;display:flex;align-items:center;justify-content:center}
+.pb-qr:empty{display:none}
+.pb-qr svg{width:100%;height:100%}
+.pb-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.pb-agr ol{margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:12px}
+.pb-agr li{padding-left:4px}
+.pb-agr li b{display:block;margin-bottom:2px}
+.pb-agr p{overflow-wrap:anywhere}
+.pb-signs{display:grid;grid-template-columns:1fr;gap:12px}
+@media (min-width:640px){.pb-signs{grid-template-columns:1fr 1fr}}
+.pb-sign{border:1.5px solid var(--line);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.pb-sign .pb-sig{font-family:"Brush Script MT","Segoe Script",cursive;font-size:1.5rem;line-height:1.2;overflow-wrap:anywhere}
+.pb-form{display:flex;flex-direction:column;gap:12px}
+.pb-form label{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:.92rem}
+.pb-form input,.pb-form textarea{border:1.5px solid var(--line);border-radius:12px;padding:11px 13px;background:var(--surface);width:100%;font-weight:400}
+.pb-form .pb-check{flex-direction:row;align-items:flex-start;gap:10px;font-weight:500}
+.pb-form .pb-check input{width:auto;margin-top:4px}
+.pb-hp{position:absolute!important;left:-9999px!important;width:1px!important;height:1px!important;overflow:hidden!important}
+.pb-err{color:var(--accent);font-size:.88rem}
+@media print{
+  @page{size:A4;margin:12mm}
+  html,body{background:#ffffff!important}
+  header,.dock,#toast,.pb-noprint,.k-cta,.kcta{display:none!important}
+  body::before{display:none!important}
+  .pb-wrap{max-width:none;padding:0;gap:8px}
+  body:has(.pb-wrap) .in, body:has(.pb-wrap) main{padding:0!important;margin:0!important;max-width:none!important}
+  .pb-paper{box-shadow:none;border-radius:0;padding:0;font-size:9.5pt;line-height:1.35}
+  .pb-head{padding-bottom:8px}
+  .pb-head h1{font-size:18pt}
+  .pb-parties{grid-template-columns:1fr 1fr;margin-top:10px;gap:12px}
+  .pb-tblw{margin-top:10px}
+  .pb-tbl{font-size:9pt}
+  .pb-tbl th,.pb-tbl td{padding:5px 7px}
+  .pb-sum{margin-top:8px;font-size:9.5pt}
+  .pb-words,.pb-notes{margin-top:8px}
+  .pb-foot{margin-top:10px}
+  .pb-tblw{overflow:visible}
+  .pb-tbl{min-width:0}
+  .pb-tbl th{background:#f3f3f7!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .pb-ribbon{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .pb-agrprint .panel{background:#ffffff!important;color:#16161d!important;padding:0}
+}
+</style>
+<script>
+/* ---------- part_public ---------- */
+const PB_ONES = ['Zero','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+const PB_TENS = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+function pbBelow100(n){ return n < 20 ? PB_ONES[n] : PB_TENS[Math.floor(n/10)] + (n%10 ? ' ' + PB_ONES[n%10] : ''); }
+function pbBelow1000(n){ const h = Math.floor(n/100), r = n%100; return (h ? PB_ONES[h] + ' Hundred' : '') + (h && r ? ' ' : '') + (r ? pbBelow100(r) : ''); }
+function pbWordsInt(n){
+  n = Math.floor(Math.abs(Number(n)||0));
+  if(n === 0) return 'Zero';
+  const parts = [], crore = Math.floor(n/1e7), rest = n % 1e7;
+  if(crore) parts.push(pbWordsInt(crore) + ' Crore');
+  const lakh = Math.floor(rest/1e5), th = Math.floor((rest%1e5)/1000), r = rest%1000;
+  if(lakh) parts.push(pbBelow100(lakh) + ' Lakh');
+  if(th) parts.push(pbBelow100(th) + ' Thousand');
+  if(r) parts.push(pbBelow1000(r));
+  return parts.join(' ');
+}
+function pbRupeesWords(n){ return 'Rupees ' + pbWordsInt(n) + ' only'; }
+function pbDate(d){ if(!d) return ''; const x = new Date(String(d).length===10 ? d+'T00:00:00' : d); return isNaN(x) ? '' : x.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}); }
+function pbInt(v){ const n = Math.round(Number(v)); return isFinite(n) && n > 0 ? n : 0; }
+function pbNum(v){ const n = Number(v); return isFinite(n) ? n : 0; }
+function pbStr(v){ return v==null ? '' : String(v).trim(); }
+function pbMoney(n){ return '₹' + pbNum(n).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:2}); }
+function pbFirst(name){ return pbStr(name).split(/\s+/)[0] || 'this creator'; }
+function pbEmailOk(e){ return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(pbStr(e)); }
+function pbState(){ if(!S.pub) S.pub = {inv:null, agr:null, enq:{}}; if(!S.pub.enq) S.pub.enq = {}; return S.pub; }
+
+/* ---------- agreement text ---------- */
+function agreementText(t, n){
+  t = t || {}; n = n || {};
+  const creator = pbStr(n.creator) || 'the creator', brand = pbStr(n.brand) || pbStr(t.brand_name) || 'the brand';
+  const fee = pbInt(t.fee), pv = pbInt(t.product_value), prod = pbStr(t.product_note);
+  const usage = Math.min(24, pbInt(t.usage_months)), excl = Math.min(90, pbInt(t.exclusivity_days)), rev = Math.min(5, pbInt(t.revisions)), payd = Math.min(90, pbInt(t.payment_days));
+  const post = t.post_date ? pbDate(t.post_date) : '';
+  const prodLine = prod ? `${esc(prod)}${pv ? ' (worth '+esc(pbMoney(pv))+')' : ''}` : '';
+  const c = [];
+  c.push(['Who this is between', `This agreement is between <b style="display:inline">${esc(creator)}</b> (“Creator”) and <b style="display:inline">${esc(brand)}</b> (“Brand”).`]);
+  c.push(['The work', `Creator will make: ${esc(pbStr(t.title) || 'the content described below')}.` + (pbStr(t.deliverables) ? `<br>Deliverables: ${esc(t.deliverables).replace(/\n/g,'<br>')}` : '') + `<br>Posting date: ${post ? esc(post) : 'a date both sides agree in writing'}.`]);
+  if(fee && prodLine) c.push(['Fee and product', `Brand will pay Creator ${esc(pbMoney(fee))}, and will also send ${prodLine}, which Creator keeps.`]);
+  else if(fee) c.push(['Fee', `Brand will pay Creator ${esc(pbMoney(fee))}.`]);
+  else if(prodLine) c.push(['Product', `Brand will send ${prodLine}, which Creator keeps. No fee is payable for this collaboration.`]);
+  else c.push(['Fee', 'No fee or product is agreed in this document. Any payment must be agreed in writing.']);
+  if(fee) c.push(['Payment', payd ? `Brand will pay within ${payd} days of the content being posted, against Creator’s invoice.` : 'Brand will pay when the content is posted, against Creator’s invoice.']);
+  c.push(['Review and changes', rev ? `Creator will share the content before posting. Brand may ask for up to ${rev} round${rev>1?'s':''} of reasonable changes that stay within this brief.` : 'Creator will share the content before posting. Brand may check it for factual errors; no further rounds of changes are included.']);
+  c.push(['Disclosure', 'Creator will mark the post as a paid partnership or ad, as required by the ASCI guidelines for influencer advertising.']);
+  c.push(['Usage rights', usage ? `Brand may use the content in its own organic posts and paid ads for ${usage} month${usage>1?'s':''} from posting. After that, Brand may only repost it with credit to Creator.` : 'Brand may share or repost Creator’s post with credit. Use in paid ads is not included.']);
+  c.push(['Ownership', 'Creator keeps ownership of the content. Brand gets only the right to use it described above.']);
+  c.push(['Exclusivity', excl ? `Creator will not post for a competing brand in the same category for ${excl} days from posting.` : 'There is no exclusivity. Creator may work with other brands.']);
+  c.push(['Cancellation', 'If Brand cancels after Creator has started shooting, 50% of the fee is payable.' + (prodLine ? ' Any product already received stays with Creator.' : '')]);
+  if(pbStr(t.extra)) c.push(['Other terms', esc(t.extra).replace(/\n/g,'<br>')]);
+  return `<ol>${c.map(([h,b])=>`<li><b>${h}</b><p>${b}</p></li>`).join('')}</ol><p class="meta" style="margin-top:14px">This is a simple template agreement. For larger deals, have it reviewed by a lawyer.</p>`;
+}
+
+/* ---------- invoice ---------- */
+async function openInvoice(token){
+  const st = pbState();
+  st.inv = {token: pbStr(token), d:null, loading:true};
+  S.view = 'i'; S.arg = token; render(); window.scrollTo(0,0);
+  let d = null;
+  try{ const r = await sb.rpc('public_invoice', {p_token: pbStr(token)}); d = r && !r.error ? r.data : null; }catch(e){ d = null; }
+  if(S.view !== 'i' || S.arg !== token) return;
+  st.inv = {token: pbStr(token), d: d && typeof d === 'object' ? d : null, loading:false};
+  render(); window.scrollTo(0,0);
+}
+function pbItems(d){
+  const raw = Array.isArray(d.items) ? d.items : [];
+  return raw.map(x=>({desc: pbStr(x && x.desc), qty: pbNum(x && x.qty), rate: pbNum(x && x.rate)})).filter(x=>x.desc || x.qty || x.rate);
+}
+function pbTotals(d){
+  const items = pbItems(d);
+  const sub = d.subtotal != null ? pbNum(d.subtotal) : Math.round(items.reduce((s,x)=>s + x.qty*x.rate, 0));
+  const type = ['cgst_sgst','igst'].includes(d.gst_type) ? d.gst_type : 'none';
+  const gst = type==='none' ? 0 : (d.gst_amount != null ? pbNum(d.gst_amount) : Math.round(sub*0.18));
+  const total = d.total != null ? pbNum(d.total) : sub + gst;
+  const cg = type==='cgst_sgst' ? Math.round(sub*0.09) : 0;
+  return {items, sub, type, gst, total, cg, sg: type==='cgst_sgst' ? gst - cg : 0};
+}
+function pbUpiLink(upi, name, total, number){
+  return 'upi://pay?pa=' + encodeURIComponent(upi) + '&pn=' + encodeURIComponent(name) + '&am=' + encodeURIComponent(pbNum(total).toFixed(2)) + '&cu=INR&tn=' + encodeURIComponent('Invoice ' + number);
+}
+function vInvoice(){
+  const st = pbState(), I = st.inv;
+  if(!I || I.loading) return `<div class="pb-wrap"><p class="meta">Loading invoice…</p></div>`;
+  const d = I.d;
+  if(!d) return `<div class="pb-wrap"><div class="panel"><h2>This invoice is not available</h2><p class="meta">It may have been cancelled, or the link is incomplete. Please check with the person who sent it.</p><div><button class="btn" data-act="home">Go to Boli</button></div></div></div>`;
+  const s = d.seller && typeof d.seller === 'object' ? d.seller : {}, b = d.buyer && typeof d.buyer === 'object' ? d.buyer : {};
+  const T = pbTotals(d), number = pbStr(d.number), paid = d.status === 'paid';
+  const sname = pbStr(s.legal_name) || pbStr(s.name) || pbStr(s.profile_name) || pbStr(d.creator_name) || 'Creator';
+  const gstin = pbStr(s.gstin), title = T.type !== 'none' && gstin ? 'Tax invoice' : 'Invoice';
+  const overdue = !paid && d.due_date && new Date(d.due_date+'T23:59:59') < new Date();
+  const line = (k,v) => v ? `<span>${k}</span><b>${esc(v)}</b>` : '';
+  const upi = pbStr(s.upi), acct = pbStr(s.account_no);
+  const pay = paid ? '' : `<div class="panel pb-pay pb-noprint" id="pbPay">
+      <div class="row" style="flex-wrap:wrap"><h2>Pay ${esc(pbMoney(T.total))}</h2>${d.due_date?`<span class="${overdue?'tag':'tag ok'}">${overdue?'Overdue since':'Due by'} ${esc(pbDate(d.due_date))}</span>`:''}</div>
+      ${d.pay_online ? `<div><button class="btn accent" data-act="pub-pay" data-v="${esc(I.token)}">Pay online</button></div><p class="meta">Card, netbanking and UPI, processed securely through Boli.</p>` : ''}
+      ${upi || acct ? `<div class="pb-paygrid">
+        ${upi ? `<div class="pb-form" style="gap:8px"><b>UPI</b><div><a class="btn" href="${esc(pbUpiLink(upi, sname, T.total, number))}">Pay with UPI app</a></div><div class="pb-qr" id="pbQr" data-upi="${esc(pbUpiLink(upi, sname, T.total, number))}" aria-label="UPI QR code"></div><p class="meta">UPI ID: <span class="pb-mono">${esc(upi)}</span>. Scan with any UPI app, or tap the button on your phone.</p></div>` : ''}
+        ${acct ? `<div style="display:flex;flex-direction:column;gap:4px"><b>Bank transfer</b>
+          ${pbStr(s.account_name)?`<span class="meta">Account name</span><span>${esc(s.account_name)}</span>`:''}
+          <span class="meta">Account number</span><span class="pb-mono">${esc(acct)}</span>
+          ${pbStr(s.ifsc)?`<span class="meta">IFSC</span><span class="pb-mono">${esc(s.ifsc)}</span>`:''}
+          ${pbStr(s.bank_name)?`<span class="meta">Bank</span><span>${esc(s.bank_name)}</span>`:''}</div>` : ''}
+      </div>` : (d.pay_online ? '' : `<p class="meta">Payment details were not added to this invoice. Please contact ${esc(pbFirst(sname))} for them.</p>`)}
+      <p class="meta">Please mention invoice ${esc(number)} with your payment.${d.pay_online ? '' : ' Online card and netbanking payment through Boli is coming soon.'}</p>
+    </div>`;
+  return `<div class="pb-wrap">
+    <div class="pb-bar pb-noprint"><span class="eyebrow">Invoice from ${esc(sname)}</span><div class="pb-acts"><button class="pill" data-act="pub-print">Print or save as PDF</button></div></div>
+    <article class="pb-paper" aria-label="${esc(title)} ${esc(number)}">
+      ${paid ? '<div class="pb-ribbon" aria-label="Paid">PAID</div>' : ''}
+      <div class="pb-head">
+        <div><h1>${title}</h1><p class="pb-mut" style="margin-top:4px">${esc(sname)}</p></div>
+        <div class="pb-meta">${line('Invoice no.', number)}${line('Date', pbDate(d.issue_date))}${line('Due', pbDate(d.due_date))}${paid?'<span>Status</span><b style="color:#0f7a57">Paid</b>':''}</div>
+      </div>
+      <div class="pb-parties">
+        <div class="pb-party"><h3>From</h3><b>${esc(sname)}</b>${pbStr(s.address)?`<p>${esc(s.address)}</p>`:''}${pbStr(s.state)?`<p class="pb-mut">State: ${esc(s.state)}</p>`:''}${pbStr(s.pan)?`<p class="pb-mut">PAN: <span class="pb-mono">${esc(s.pan)}</span></p>`:''}${gstin?`<p class="pb-mut">GSTIN: <span class="pb-mono">${esc(gstin)}</span></p>`:''}</div>
+        <div class="pb-party"><h3>Bill to</h3><b>${esc(pbStr(b.name) || 'Brand')}</b>${pbStr(b.address)?`<p>${esc(b.address)}</p>`:''}${pbStr(b.state)?`<p class="pb-mut">State: ${esc(b.state)}</p>`:''}${pbStr(b.gstin)?`<p class="pb-mut">GSTIN: <span class="pb-mono">${esc(b.gstin)}</span></p>`:''}${pbStr(b.email)?`<p class="pb-mut">${esc(b.email)}</p>`:''}</div>
+      </div>
+      <div class="pb-tblw"><table class="pb-tbl">
+        <thead><tr><th class="pb-ix" style="width:36px">#</th><th>Description</th><th class="n">Qty</th><th class="n">Rate</th><th class="n">Amount</th></tr></thead>
+        <tbody>${T.items.map((x,i)=>`<tr><td class="pb-ix">${i+1}</td><td>${esc(x.desc)}</td><td class="n">${esc(x.qty.toLocaleString('en-IN'))}</td><td class="n">${esc(pbMoney(x.rate))}</td><td class="n">${esc(pbMoney(Math.round(x.qty*x.rate*100)/100))}</td></tr>`).join('') || '<tr><td colspan="5" class="pb-mut">No items</td></tr>'}</tbody>
+      </table></div>
+      <div class="pb-sum">
+        <div><span class="pb-mut">Subtotal</span><span>${esc(pbMoney(T.sub))}</span></div>
+        ${T.type==='cgst_sgst' ? `<div><span class="pb-mut">CGST 9%</span><span>${esc(pbMoney(T.cg))}</span></div><div><span class="pb-mut">SGST 9%</span><span>${esc(pbMoney(T.sg))}</span></div>` : ''}
+        ${T.type==='igst' ? `<div><span class="pb-mut">IGST 18%</span><span>${esc(pbMoney(T.gst))}</span></div>` : ''}
+        <div class="pb-tot"><span>Total</span><span>${esc(pbMoney(T.total))}</span></div>
+      </div>
+      <div class="pb-words"><span class="pb-mut">Amount in words:</span> ${esc(pbRupeesWords(T.total))}</div>
+      ${pbStr(d.notes) ? `<div class="pb-notes"><b>Notes</b><br>${esc(d.notes)}</div>` : ''}
+      ${!paid && (upi || acct) ? `<div class="pb-notes"><b>Payment details</b><br>${upi?`UPI: ${esc(upi)}`:''}${upi&&acct?'<br>':''}${acct?`Bank: ${esc(pbStr(s.account_name) || sname)}, A/c ${esc(acct)}${pbStr(s.ifsc)?', IFSC '+esc(s.ifsc):''}${pbStr(s.bank_name)?', '+esc(s.bank_name):''}`:''}</div>` : ''}
+      <div class="pb-foot"><span>Sent through Boli · boli.ourdreamwork.com</span>${T.type==='none' && !gstin ? '<span>Supplier not registered under GST</span>' : ''}</div>
+    </article>
+    ${pay}
+  </div>`;
+}
+
+/* lazy QR: fills #pbQr whenever it is on the page */
+let pbQrLib = null;
+function pbLoadQr(){
+  if(pbQrLib) return pbQrLib;
+  pbQrLib = new Promise((res)=>{
+    if(typeof window.qrcode === 'function') return res(true);
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js'; sc.async = true;
+    sc.onload = ()=>res(typeof window.qrcode === 'function'); sc.onerror = ()=>res(false);
+    document.head.appendChild(sc);
+    setTimeout(()=>res(typeof window.qrcode === 'function'), 8000);
+  });
+  return pbQrLib;
+}
+function pbFillQr(){
+  const el = document.getElementById('pbQr');
+  if(!el || el.dataset.done) return;
+  el.dataset.done = '1';
+  const data = el.dataset.upi || '';
+  pbLoadQr().then(ok=>{
+    if(!ok || !el.isConnected) return;
+    try{ const qr = window.qrcode(0, 'M'); qr.addData(data); qr.make(); el.innerHTML = qr.createSvgTag({cellSize:4, margin:2, scalable:true}); }catch(e){ el.innerHTML = ''; }
+  });
+}
+(function(){
+  const start = ()=>{ const v = document.getElementById('view'); if(!v) return; new MutationObserver(()=>{ if(document.getElementById('pbQr')) pbFillQr(); }).observe(v, {childList:true, subtree:true}); };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+
+/* ---------- agreement ---------- */
+async function openAgreement(token){
+  const st = pbState();
+  st.agr = {token: pbStr(token), d:null, loading:true, err:''};
+  S.view = 'a'; S.arg = token; render(); window.scrollTo(0,0);
+  let d = null;
+  try{ const r = await sb.rpc('public_agreement', {p_token: pbStr(token)}); d = r && !r.error ? r.data : null; }catch(e){ d = null; }
+  if(S.view !== 'a' || S.arg !== token) return;
+  st.agr = {token: pbStr(token), d: d && typeof d === 'object' ? d : null, loading:false, err:''};
+  render(); window.scrollTo(0,0);
+}
+function vAgreement(){
+  const st = pbState(), A = st.agr;
+  if(!A || A.loading) return `<div class="pb-wrap"><p class="meta">Loading agreement…</p></div>`;
+  const d = A.d;
+  if(!d) return `<div class="pb-wrap"><div class="panel"><h2>This agreement is not available</h2><p class="meta">It may have been withdrawn, or the link is incomplete. Please check with the person who sent it.</p><div><button class="btn" data-act="home">Go to Boli</button></div></div></div>`;
+  const t = d.terms && typeof d.terms === 'object' ? d.terms : {};
+  const creator = pbStr(d.creator_name) || 'Creator', brand = pbStr(t.brand_name) || 'Brand';
+  const accepted = d.status === 'accepted';
+  const brandBlock = accepted
+    ? `<div class="pb-sign"><span class="meta">For ${esc(brand)}</span><span class="pb-sig">${esc(d.brand_signed_name)}</span><span class="meta">Accepted on ${esc(pbDate(d.brand_signed_at))}</span></div>`
+    : `<div class="pb-sign"><span class="meta">For ${esc(brand)}</span><span class="meta">Not accepted yet</span></div>`;
+  const form = accepted ? `<div class="panel pb-noprint"><span class="tag ok" style="align-self:flex-start">Accepted</span><p>This agreement was accepted by ${esc(d.brand_signed_name)} for ${esc(brand)} on ${esc(pbDate(d.brand_signed_at))}. Both sides can keep this page as a record, or save it as a PDF.</p></div>`
+    : d.status === 'sent' ? `<form id="pubAgrForm" class="panel pb-form pb-noprint" novalidate>
+        <h2>Accept this agreement</h2>
+        <label for="pubAgrName">Your full name<input id="pubAgrName" maxlength="80" autocomplete="name"></label>
+        <label for="pubAgrEmail">Your work email<input id="pubAgrEmail" type="email" maxlength="120" autocomplete="email" inputmode="email"></label>
+        <label for="pubAgrOk" class="pb-check"><input id="pubAgrOk" type="checkbox"> I accept this agreement on behalf of ${esc(brand)}.</label>
+        <p class="pb-err" id="pubAgrErr" ${A.err?'':'hidden'}>${esc(A.err)}</p>
+        <div><button class="btn accent" type="submit">Accept agreement</button></div>
+        <p class="meta">Typing your name and accepting here counts as your signature. ${esc(pbFirst(creator))} will get an email when you accept.</p>
+      </form>` : '';
+  return `<div class="pb-wrap pb-agrprint">
+    <div class="pb-bar pb-noprint"><span class="eyebrow">Collaboration agreement</span><div class="pb-acts"><button class="pill" data-act="pub-print">Print or save as PDF</button></div></div>
+    <div class="panel pb-agr">
+      <div class="row" style="flex-wrap:wrap"><h1 style="font-size:clamp(1.6rem,5vw,2.2rem)">Collaboration agreement</h1>${accepted?'<span class="tag ok">Accepted</span>':'<span class="tag">Awaiting acceptance</span>'}</div>
+      <p class="meta">${esc(creator)} and ${esc(brand)}${pbStr(t.title)?' · '+esc(t.title):''}</p>
+      ${agreementText(t, {creator, brand})}
+      <div class="pb-signs">
+        <div class="pb-sign"><span class="meta">Creator</span><span class="pb-sig">${esc(creator)}</span><span class="meta">${d.creator_signed_at?'Signed on '+esc(pbDate(d.creator_signed_at)):''}</span></div>
+        ${brandBlock}
+      </div>
+      <p class="meta">Shared through Boli · boli.ourdreamwork.com</p>
+    </div>
+    ${form}
+  </div>`;
+}
+
+/* ---------- "Work with me" enquiry on the public profile ---------- */
+function kitEnquiryHTML(k){
+  if(!k || !k.id) return '';
+  const st = pbState(), e = st.enq[k.id] || {}, first = pbFirst(k.name);
+  let inner;
+  if(e.sent) inner = `<span class="tag ok" style="align-self:flex-start">Sent</span><p>${esc(first)} will reply to your email.</p>`;
+  else if(!e.open) inner = `<p class="meta">Want ${esc(first)} to make content for your brand? Send a short enquiry. It goes straight to ${esc(first)}.</p><div><button class="btn accent" data-act="pub-enq-open" data-v="${esc(k.id)}">Send an enquiry</button></div>`;
+  else inner = `<form id="pubEnqForm" class="pb-form" data-k="${esc(k.handle || k.id)}" data-id="${esc(k.id)}" novalidate>
+      <label for="pubEnqBrand">Brand name<input id="pubEnqBrand" maxlength="100" autocomplete="organization" value="${esc(e.brand||'')}"></label>
+      <label for="pubEnqName">Your name<input id="pubEnqName" maxlength="80" autocomplete="name" value="${esc(e.name||'')}"></label>
+      <label for="pubEnqEmail">Email<input id="pubEnqEmail" type="email" maxlength="120" autocomplete="email" inputmode="email" value="${esc(e.email||'')}"></label>
+      <label for="pubEnqPhone">Phone (optional)<input id="pubEnqPhone" type="tel" maxlength="20" autocomplete="tel" inputmode="tel" value="${esc(e.phone||'')}"></label>
+      <label for="pubEnqBudget">Budget in ₹ (optional)<input id="pubEnqBudget" type="number" min="0" step="500" inputmode="numeric" value="${esc(e.budget||'')}"></label>
+      <label for="pubEnqMsg">What would you like ${esc(first)} to make?<textarea id="pubEnqMsg" rows="4" maxlength="1000">${esc(e.msg||'')}</textarea></label>
+      <div class="pb-hp" aria-hidden="true"><label for="pubEnqWeb">Website<input id="pubEnqWeb" tabindex="-1" autocomplete="off"></label></div>
+      <p class="pb-err" id="pubEnqErr" ${e.err?'':'hidden'}>${esc(e.err||'')}</p>
+      <div class="row" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn accent" type="submit">Send enquiry</button><button type="button" class="pill" data-act="pub-enq-close" data-v="${esc(k.id)}">Cancel</button></div>
+      <p class="meta">${esc(first)} sees your name, email and phone so they can reply.</p>
+    </form>`;
+  return `<div class="panel pb-noprint" id="pubEnq" data-id="${esc(k.id)}"><h2>Work with ${esc(first)}</h2>${inner}</div>`;
+}
+function pbEnqKit(){ return (S.kit && S.kit.k) || (S.cr && S.cr.k) || null; }
+function pbEnqRefresh(){
+  const el = document.getElementById('pubEnq'), k = pbEnqKit();
+  if(!el || !k) return;
+  el.outerHTML = kitEnquiryHTML(k);
+}
+
+document.addEventListener('click', ev=>{
+  const el = ev.target.closest('[data-act^="pub-"]'); if(!el || el.disabled) return;
+  const a = el.dataset.act, v = el.dataset.v, st = pbState();
+  if(a==='pub-print'){ window.print(); return; }
+  if(a==='pub-pay'){ if(typeof window.boliPayInvoice === 'function') window.boliPayInvoice(v); else toast('Online payment is not available yet. Please use UPI or bank transfer.'); return; }
+  if(a==='pub-enq-open'){ st.enq[v] = {...(st.enq[v]||{}), open:true, err:''}; pbEnqRefresh(); const f=document.getElementById('pubEnqBrand'); if(f) f.focus(); return; }
+  if(a==='pub-enq-close'){ st.enq[v] = {...(st.enq[v]||{}), open:false, err:''}; pbEnqRefresh(); return; }
+});
+document.addEventListener('input', ev=>{
+  const id = ev.target.id; if(!/^pubEnq/.test(id)) return;
+  const f = document.getElementById('pubEnqForm'); if(!f) return;
+  const st = pbState(), e = st.enq[f.dataset.id] = st.enq[f.dataset.id] || {open:true};
+  const map = {pubEnqBrand:'brand', pubEnqName:'name', pubEnqEmail:'email', pubEnqPhone:'phone', pubEnqBudget:'budget', pubEnqMsg:'msg'};
+  if(map[id]) e[map[id]] = ev.target.value;
+});
+document.addEventListener('submit', ev=>{
+  const f = ev.target, id = f.id;
+  if(id !== 'pubAgrForm' && id !== 'pubEnqForm') return;
+  ev.preventDefault();
+  const st = pbState();
+  if(id === 'pubAgrForm') return run(async()=>{
+    const A = st.agr; if(!A) return;
+    const name = pbStr($('pubAgrName').value), email = pbStr($('pubAgrEmail').value), ok = $('pubAgrOk').checked;
+    const err = name.length < 2 || !pbEmailOk(email) ? 'Add your name and a valid email.' : !ok ? 'Tick the box to accept on behalf of the brand.' : '';
+    const pe = $('pubAgrErr');
+    if(err){ pe.textContent = err; pe.hidden = false; return; }
+    pe.hidden = true;
+    const r = await sb.rpc('accept_agreement', {p_token: A.token, p_name: name, p_email: email});
+    if(r.error){ pe.textContent = r.error.message || 'Could not accept. Please try again.'; pe.hidden = false; return; }
+    if(r.data && typeof r.data === 'object') A.d = r.data;
+    else if(A.d){ A.d = {...A.d, status:'accepted', brand_signed_name:name, brand_signed_email:email, brand_signed_at:new Date().toISOString()}; }
+    render(); window.scrollTo(0,0); toast('Agreement accepted');
+  });
+  if(id === 'pubEnqForm') return run(async()=>{
+    const kid = f.dataset.id, key = f.dataset.k, e = st.enq[kid] = st.enq[kid] || {open:true};
+    const val = x => pbStr($(x).value);
+    e.brand = val('pubEnqBrand'); e.name = val('pubEnqName'); e.email = val('pubEnqEmail'); e.phone = val('pubEnqPhone'); e.budget = val('pubEnqBudget'); e.msg = val('pubEnqMsg');
+    const showErr = m => { e.err = m; const pe = $('pubEnqErr'); if(pe){ pe.textContent = m; pe.hidden = false; } };
+    if(!e.brand) return showErr('Add your brand name.');
+    if(!e.name) return showErr('Add your name.');
+    if(!pbEmailOk(e.email)) return showErr('Add a valid email so the creator can reply.');
+    if(!e.msg) return showErr('Tell the creator what you would like them to make.');
+    if(e.phone && !/^[+0-9 ()-]{6,20}$/.test(e.phone)) return showErr('Check the phone number.');
+    const budget = e.budget === '' ? null : Math.max(0, Math.round(Number(e.budget)) || 0);
+    e.err = '';
+    if(val('pubEnqWeb')){ e.sent = true; e.open = false; pbEnqRefresh(); return; }
+    const r = await sb.rpc('submit_enquiry', {p_key: key, p_brand: e.brand, p_contact: e.name, p_email: e.email, p_phone: e.phone || null, p_message: e.msg, p_budget: budget});
+    if(r.error || r.data === false) return showErr(r.error ? (r.error.message || 'Could not send. Please try again.') : 'This creator is not taking enquiries right now.');
+    e.sent = true; e.open = false; pbEnqRefresh();
+  });
+});
 </script>
 
 </body>
