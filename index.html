@@ -187,6 +187,8 @@ body.busy::before{content:'';position:fixed;top:0;left:0;height:3px;width:40%;ba
 .pubgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0 24px}
 .pubc{width:100%;background:none;border:0;border-bottom:1px solid var(--line);text-align:left;align-items:flex-start}
 .pubc .pubt{flex:1;min-width:0;overflow-wrap:anywhere}
+.bc-rep{font-size:.84rem;color:var(--muted);margin-top:2px}
+.k-rates .kv{gap:12px}
 </style>
 </head>
 <body>
@@ -238,10 +240,12 @@ const PX = PCOLS + ',bio,area,local_focus';
 let PSEL = PCOLS;
 /* Extra profile columns for the public creator profile; added to PSEL only once the database has them. */
 const PK = ',handle,public_on,show_rate';
+/* Collab finder columns; added to PSEL only once the database has them (S.cap.extra). */
+const PC = ',collab_open,collab_note';
 const HANDLE_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const SUPPORT_EMAIL = '';
 const TERMS = ['Deals that start on Boli are agreed, delivered and paid through Boli.','Keep all conversation about a deal inside Boli messages. Phone numbers, emails, links and social handles are hidden in messages.','Give accurate details about yourself, your followers and your brand.','Creators own their videos until the brand pays for them. Paid posts carry the paid partnership label.','Boli may charge brands a service fee on each deal. The fee is always shown before a deal is confirmed.','The Boli team can read deal messages and may step in to help or to resolve a dispute.','Taking a deal that started on Boli off the platform can get your account suspended.','Accounts that break these terms can be suspended or removed.'];
-const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms','forgot','reset','creator','edit','c','studio','i','a'];
+const ROUTES = ['home','brief','work','dash','find','account','profile','auth','thread','admin','terms','forgot','reset','creator','edit','c','studio','i','a','collabs'];
 const ACTIVE = ['accepted','sent','approved','paid'];
 const S = {view:'home', arg:null, cat:null, q:'', fo:null, flt:{...DEF}, tpl:'simple', user:null, me:null, briefs:[], apps:[], mine:[], creators:[], msgs:[], authMode:'up', authRole:'creator', pend:null, fa:'', ft:'content', stats:{}, bstats:{}, del:{}, bf:{}, bfClear:false, extra:{}, authNote:'', alerts:true, alertsOk:false, pwOpen:false, resendEmail:'', resendUntil:0, forgotSent:'', lang:'', invites:[], cap:{profiles:false, briefs:false, invites:false, kit:false, studio:false}, billing:null, studioSum:null, billOpen:false, samples:[], pubCreators:null, pendC:null};
 
@@ -286,9 +290,9 @@ async function loadWork(){
 }
 async function probeCaps(){
   const safe = p => p.then(r=>r, ()=>({error:{code:'', message:'failed to fetch'}}));
-  const [p, b, i, k, st] = await Promise.all([safe(sb.from('profiles').select('bio').limit(1)), safe(sb.from('briefs').select('lang').limit(1)), safe(sb.from('invites').select('id').limit(1)), safe(sb.from('profiles').select('handle').limit(1)), safe(sb.from('collabs').select('id').limit(1))]);
-  S.cap = {profiles: capOk(p), briefs: capOk(b), invites: capOk(i), kit: capOk(k), studio: capOk(st)};
-  PSEL = (S.cap.profiles ? PX : PCOLS) + (S.cap.kit ? PK : '');
+  const [p, b, i, k, st, ex] = await Promise.all([safe(sb.from('profiles').select('bio').limit(1)), safe(sb.from('briefs').select('lang').limit(1)), safe(sb.from('invites').select('id').limit(1)), safe(sb.from('profiles').select('handle').limit(1)), safe(sb.from('collabs').select('id').limit(1)), safe(sb.from('rate_cards').select('creator_id').limit(1))]);
+  S.cap = {profiles: capOk(p), briefs: capOk(b), invites: capOk(i), kit: capOk(k), studio: capOk(st), extra: capOk(ex)};
+  PSEL = (S.cap.profiles ? PX : PCOLS) + (S.cap.kit ? PK : '') + (S.cap.extra ? PC : '');
 }
 const invitedTo = id => !!(isCreator() && (S.invites||[]).some(i=>i.brief_id===id));
 const fval = (id, max) => { const e = $(id); const v = e ? String(e.value||'').trim() : ''; return v ? v.slice(0, max||1500) : null; };
@@ -296,7 +300,7 @@ let loadChain = Promise.resolve();
 function loadAll(){ const p = loadChain.catch(()=>{}).then(doLoad); loadChain = p; return p; }
 async function doLoad(){
   try{ return await doLoad0(); }
-  catch(e){ if(PSEL!==PCOLS && /does not exist|42703/i.test(String(e && e.message))){ PSEL = PCOLS; S.cap.profiles = false; S.cap.kit = false; return await doLoad0(); } throw e; }
+  catch(e){ if(PSEL!==PCOLS && /does not exist|42703/i.test(String(e && e.message))){ PSEL = PCOLS; S.cap.profiles = false; S.cap.kit = false; S.cap.extra = false; return await doLoad0(); } throw e; }
 }
 async function doLoad0(){
   const uid = S.user ? S.user.id : null;
@@ -331,8 +335,28 @@ async function doLoad0(){
     N.billing = bl && !bl.error ? (bl.data||null) : null;
     N.studioSum = ss && !ss.error && ss.data && typeof ss.data==='object' ? ss.data : null;
   }
+  N.reps = {}; N.myRatings = new Set();
+  if(S.cap.extra){
+    const tol = p => Promise.resolve().then(()=>p).then(r=>r, ()=>({error:true}));
+    const ids = [...new Set([...N.briefs.map(b=>b.brand_id), ...N.apps.map(a=>a.briefs && a.briefs.brand_id)].filter(Boolean))].slice(0, 100);
+    const [rp, mr] = await Promise.all([ids.length ? tol(sb.rpc('brand_reputations', {p_brands: ids})) : null,
+      N.me && N.me.role==='creator' ? tol(sb.from('brand_ratings').select('application_id')) : null]);
+    if(rp && !rp.error && Array.isArray(rp.data)) rp.data.forEach(r=>{ if(r && r.brand_id) N.reps[r.brand_id] = r; });
+    if(mr && !mr.error && Array.isArray(mr.data)) mr.data.forEach(r=>{ if(r && r.application_id) N.myRatings.add(r.application_id); });
+  }
   if((S.user ? S.user.id : null) !== uid) return;
   Object.assign(S, N);
+}
+/* Brand reputation helpers: badge HTML from part_community when present; one-off fetch for briefs not in the main list. */
+const repHTML = id => (S.cap && S.cap.extra && typeof brandRepHTML==='function' && S.reps) ? brandRepHTML(S.reps[id]) : '';
+const repPend = {};
+function repFetch(id){
+  if(!id || !S.cap || !S.cap.extra || !S.reps || (id in S.reps) || repPend[id]) return;
+  repPend[id] = true;
+  Promise.resolve().then(()=>sb.rpc('brand_reputation', {p_brand: id})).then(r=>{
+    S.reps[id] = r && !r.error && r.data && typeof r.data==='object' ? {brand_id:id, ...r.data} : null;
+    if(S.view==='brief'){ const b = briefById(S.arg); if(b && b.brand_id===id){ const y = window.scrollY; render(); window.scrollTo(0, y); } }
+  }, ()=>{ S.reps[id] = null; });
 }
 const rec = id => { const r=S.stats[id]; return r&&r.done ? r.done+' video'+(r.done>1?'s':'')+' delivered for '+r.brands+' brand'+(r.brands>1?'s':'') : 'New on Boli'; };
 const briefById = id => S.briefs.find(b=>b.id===id) || (S.apps.find(a=>a.brief_id===id)||{}).briefs || S.mine.find(b=>b.id===id) || S.extra[id] || undefined;
@@ -344,7 +368,7 @@ const cover = (b, tag) => `<${tag||'button'} class="cover t-${hue(b.cat)}" ${tag
   <span class="glass">${TYPES[b.type]}</span><span class="cv"><b>${payLabel(b)}</b><span>${esc(b.brand_name)}</span></span></${tag||'button'}>`;
 const card = b => { const a = myApp(b.id); return `<article class="bc">${cover(b)}
   <button class="bc-t" data-act="brief" data-v="${b.id}">${esc(b.title)}</button>
-  <div class="row"><span class="meta">${esc(b.city)}${b.area?' · '+esc(b.area):''}${b.lang&&b.lang!=='Any'?' · '+esc(b.lang):''} · ${need(b)}</span>${a?`<span class="tag">${STEPS[STEP_AT[a.status]-1]||'Not selected'}</span>`:invitedTo(b.id)?'<span class="tag ok">Invited</span>':''}</div></article>`; };
+  <div class="row"><span class="meta">${esc(b.city)}${b.area?' · '+esc(b.area):''}${b.lang&&b.lang!=='Any'?' · '+esc(b.lang):''} · ${need(b)}</span>${a?`<span class="tag">${STEPS[STEP_AT[a.status]-1]||'Not selected'}</span>`:invitedTo(b.id)?'<span class="tag ok">Invited</span>':''}</div>${(r=>r?`<div class="bc-rep">${r}</div>`:'')(repHTML(b.brand_id))}</article>`; };
 const track = (s, b) => `<div class="track" style="grid-template-columns:repeat(5,1fr)">${STEPS.map((x,k)=>`<span class="${k<(STEP_AT[s]||0)?'on':''}">${k===4?lastStep(b):x}</span>`).join('')}</div>`;
 const chipsPick = (g, opts, on) => `<div class="chips" style="flex-wrap:wrap;overflow:visible" data-g="${g}">${opts.map(([k,t])=>`<button type="button" class="pill" data-act="pick" data-k="${esc(k)}" aria-pressed="${(on||[]).includes(k)}">${esc(t)}</button>`).join('')}</div>`;
 const picked = g => [...document.querySelectorAll(`[data-g="${g}"] [aria-pressed="true"]`)].map(e=>e.dataset.k);
@@ -408,7 +432,7 @@ function vHome(){
   </section>
   ${footHTML()}`; }
 
-const STUDIO_TABS = ['board','invoices','earnings','enquiries'];
+const STUDIO_TABS = ['board','invoices','earnings','expenses','rates','licences','enquiries'];
 const IN_STATES = ['Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal','Andaman and Nicobar Islands','Chandigarh','Dadra and Nagar Haveli and Daman and Diu','Delhi','Jammu and Kashmir','Ladakh','Lakshadweep','Puducherry','Other'];
 const BILL_RE = {pan:/^[A-Z]{5}[0-9]{4}[A-Z]$/, gstin:/^[0-9]{2}[A-Z0-9]{13}$/, upi:/^[A-Za-z0-9._-]{2,64}@[A-Za-z]{2,32}$/, account_no:/^[0-9]{6,20}$/, ifsc:/^[A-Z]{4}0[A-Z0-9]{6}$/, invoice_prefix:/^[A-Z0-9-]{1,10}$/};
 function studioCard(){
@@ -531,6 +555,9 @@ function vProfile(){
       <label for="pSample">Link to a sample video<input id="pSample" value="${esc(m.sample_link)}" placeholder="https://"></label>
       <p class="meta">${S.cap.profiles?'Brands see this on your profile.':'Shown only to brands whose briefs you apply to.'} Add your page link, a sample video, or both.</p>
       <label for="pRate">Your usual rate per video in ₹ (optional)<input id="pRate" type="number" min="0" step="100" value="${m.rate||''}" placeholder="e.g. 1500"></label>
+      ${S.cap.extra?`<label for="pCollab" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="pCollab" type="checkbox" style="width:auto"${m.collab_open?' checked':''}> Open to collaborations with other creators</label>
+      <label for="pCollabNote">What kind of collab? (optional)<input id="pCollabNote" maxlength="200" value="${esc(m.collab_note)}" placeholder="e.g. food walks, comedy duets"></label>
+      <p class="meta">Other creators can find you in Collabs and send you a request. Your Instagram is shared only if you accept.</p>`:''}
       ${isNew&&S.cap.kit?'<label for="pPublic" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="pPublic" type="checkbox" style="width:auto" checked> Give me a public profile link I can share</label>':''}
       ${isNew?'<label for="pAge" style="flex-direction:row;align-items:center;gap:10px;font-weight:500"><input id="pAge" type="checkbox" style="width:auto"> I am 18 or older</label>':''}
       <p class="meta" id="pErr" hidden></p>
@@ -556,7 +583,7 @@ function vBrief(){
   else if(!s && !S.workOpen) action = `<p class="meta">Applications open on launch day.</p>`;
   else if(!s) action = ok(b) ? `<button class="btn accent wide" data-act="apply" data-v="${b.id}">${aff?'Ask to join this programme':'Apply for this brief'}</button>` : `<button class="btn wide" disabled>Needs ${need(b)}. You have ${num(S.me.followers)}.</button>`;
   else if(s==='declined') action = `<p class="meta">The brand chose other creators for this brief.</p>`;
-  else action = track(s, b) + (typeof dealNotes==='function' ? dealNotes(a, b) : '') + (s==='applied' ? `<p class="meta">${b.status==='closed'?'The brand has now filled or closed this brief. You will see it here if that changes.':'Sent. You will see it here when the brand responds.'}</p>`
+  else action = track(s, b) + (s==='paid' && S.cap && S.cap.extra && S.myRatings && !S.myRatings.has(a.id) && typeof rateBrandHTML==='function' ? rateBrandHTML(a, b) : '') + (typeof dealNotes==='function' ? dealNotes(a, b) : '') + (s==='applied' ? `<p class="meta">${b.status==='closed'?'The brand has now filled or closed this brief. You will see it here if that changes.':'Sent. You will see it here when the brand responds.'}</p>`
     : s==='accepted' ? (hasProduct(b) ? delivery(a) : '') + `<form id="vidForm" class="sec" novalidate><label for="vLink">Link to your finished video<input id="vLink" placeholder="https://" value="${esc(a.video_link)}"></label><p class="meta">${hasProduct(b)?'Shoot once the product reaches you. ':''}Upload it to Google Drive, YouTube (unlisted) or Instagram and paste the link.</p><button class="btn accent wide" type="submit">Send video to the brand</button></form>`
     : s==='sent' ? `<p class="meta">The brand is reviewing your video.</p>`
     : s==='approved' ? `<p class="meta">${b.comp==='product'?'Approved. Nothing more to do; the brand will mark the deal as completed.':'Approved. Payment is the next step.'}</p>`
@@ -580,6 +607,7 @@ function vBrief(){
         ${b.lang&&b.lang!=='Any'?`<div class="kv"><span>Language</span><span>${esc(b.lang)}</span></div>`:''}
         ${b.video_len&&b.video_len!=='any'&&VLEN[b.video_len]?`<div class="kv"><span>Video length</span><span>${VLEN[b.video_len]}</span></div>`:''}
         ${b.due_days&&!aff?`<div class="kv"><span>Deliver within</span><span>${num(b.due_days)} day${b.due_days>1?'s':''} of being accepted</span></div>`:''}
+        ${(r=>r?`<div class="kv"><span>Brand rating</span><span>${r}</span></div>`:'')((repFetch(b.brand_id), repHTML(b.brand_id)))}
         ${S.bstats[b.brand_id]?`<div class="kv"><span>Brand’s record</span><span>Has completed ${S.bstats[b.brand_id]} deal${S.bstats[b.brand_id]>1?'s':''} on Boli</span></div>`:''}
         <div class="kv"><span>Looking for</span><span>${num(b.creators_needed||1)} creator${(b.creators_needed||1)>1?'s':''}</span></div>
         <div class="kv"><span>Open until</span><span>${shut?'Closed':left(daysLeft(b))}</span></div>
@@ -802,7 +830,7 @@ function vThread(){
 /* ---------- render ---------- */
 function nav(){
   const hl = S.workOpen===false ? 'Home' : 'Briefs';
-  const items = !S.user || !S.me ? [['home',hl]] : isCreator() ? [['home',hl],['work','My work'],...(S.cap.studio?[['studio','Studio']]:[]),['account','Account']] : [['dash','Dashboard'],['find','Creators'],['home','Briefs'],['account','Account']];
+  const items = !S.user || !S.me ? [['home',hl]] : isCreator() ? [['home',hl],['work','My work'],...(S.cap.studio?[['studio','Studio']]:[]),...(S.cap.extra?[['collabs','Collabs']]:[]),['account','Account']] : [['dash','Dashboard'],['find','Creators'],['home','Briefs'],['account','Account']];
   if(S.me && S.me.is_admin) items.push(['admin','Boli team']);
   const cur = S.view==='creator' ? 'find' : S.view==='edit' ? 'dash' : S.view;
   const html = items.map(([v,t])=>`<button class="nv" data-act="nav" data-v="${v}"${cur===v?' aria-current="page"':''}>${t}</button>`).join('');
@@ -825,8 +853,8 @@ function render(){
   keepForm();
   const fa=$('fAsk'); if(fa) S.fa=fa.value;
   if(S.user && !S.me && !['profile','terms','reset','c','i','a'].includes(S.view)) S.view='profile';
-  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, forgot:vForgot, reset:vReset, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome(), creator:()=>typeof vCreator==='function' ? vCreator() : vHome(), edit:vEdit, c:()=>typeof vKit==='function' ? vKit() : vHome(), studio:()=>typeof vStudio==='function' ? vStudio() : vHome(), i:()=>typeof vInvoice==='function' ? vInvoice() : vHome(), a:()=>typeof vAgreement==='function' ? vAgreement() : vHome()};
-  const need_me = ['work','dash','find','account','thread','admin','creator','edit','studio'];
+  const V = {home:vHome, auth:vAuth, profile:vProfile, brief:vBrief, work:vWork, dash:vDash, find:vFind, account:vAccount, terms:vTerms, forgot:vForgot, reset:vReset, thread:()=>vThread(), admin:()=>typeof vAdmin==='function' ? vAdmin() : vHome(), creator:()=>typeof vCreator==='function' ? vCreator() : vHome(), edit:vEdit, c:()=>typeof vKit==='function' ? vKit() : vHome(), studio:()=>typeof vStudio==='function' ? vStudio() : vHome(), collabs:()=>typeof vCollabs==='function' ? vCollabs() : vHome(), i:()=>typeof vInvoice==='function' ? vInvoice() : vHome(), a:()=>typeof vAgreement==='function' ? vAgreement() : vHome()};
+  const need_me = ['work','dash','find','account','thread','admin','creator','edit','studio','collabs'];
   if(need_me.includes(S.view) && !S.me) S.view = 'home';
   if(S.view==='admin' && !(S.me && S.me.is_admin)) S.view = 'home';
   const ban = S.me && S.me.suspended ? '<div class="lock" role="alert" style="margin-bottom:18px"><b>This account is suspended. Contact the Boli team.</b></div>' : '';
@@ -860,8 +888,9 @@ async function route(){
     if(S.user && !S.me && !['profile','terms','reset','c','i','a'].includes(view)) to('profile');
     if(view==='profile' && !S.user) to('auth');
     if(view==='auth' && S.user) to(S.me ? (isBrand() ? 'dash' : 'home') : 'profile');
-    if(['work','dash','find','account','thread','admin','creator','edit','studio'].includes(view) && !S.me) to(S.user ? 'profile' : 'home');
+    if(['work','dash','find','account','thread','admin','creator','edit','studio','collabs'].includes(view) && !S.me) to(S.user ? 'profile' : 'home');
     if(view==='studio' && !(isCreator() && S.cap.studio && typeof openStudio==='function')) to('home');
+    if(view==='collabs' && !(isCreator() && S.cap.extra && typeof openCollabs==='function')) to('home');
     if(view==='admin' && !(S.me && S.me.is_admin && typeof openAdmin==='function')) to('home');
     if(view==='creator' && !(arg && (isBrand() || (S.me && S.me.is_admin)) && typeof openCreator==='function')) to(isBrand() ? 'find' : 'home');
     if(view==='edit' && !(isBrand() && arg && S.mine.some(b=>b.id===arg))) to(isBrand() ? 'dash' : 'home');
@@ -882,6 +911,7 @@ async function route(){
     if(view==='creator') return await openCreator(arg);
     if(view==='c'){ if(arg && typeof openKit==='function') return await openKit(arg); to('home'); }
     if(view==='studio') return await openStudio(STUDIO_TABS.includes(arg) ? arg : 'board');
+    if(view==='collabs') return await openCollabs();
     if(view==='i'){ if(arg && typeof openInvoice==='function') return await openInvoice(arg); to('home'); }
     if(view==='a'){ if(arg && typeof openAgreement==='function') return await openAgreement(arg); to('home'); }
     if(view!=='auth') S.authNote = '';
@@ -1029,6 +1059,7 @@ document.addEventListener('submit', e=>{
       if(sample&&!url(sample)) return showErr('pErr','Check the sample video link.');
       row = {...row, langs, cats, deals:picked('deal'), social:social||null, followers:Math.max(0,parseInt($('pFol').value)||0), sample_link:sample||null, rate:parseInt($('pRate').value)||null};
       if(S.cap.profiles) row = {...row, bio:fval('pBio',300), area:fval('pArea',60), local_focus:cleanLocal(fval('pLocal',60))};
+      if(S.cap.extra) row = {...row, collab_open: !!($('pCollab') && $('pCollab').checked), collab_note: fval('pCollabNote',200)};
     } else {
       const site=fixUrl($('pSite').value); if(site&&!url(site)) return showErr('pErr','Check the link: it should look like yourbrand.in or instagram.com/yourbrand');
       row = {...row, cats:[$('pCat').value], site:site||null};
@@ -1437,7 +1468,7 @@ document.addEventListener('submit', e=>{
 </style>
 <script>
 /* ---------- Boli team admin (part_admin) ---------- */
-const AD_TABS = [['attn','Needs attention'],['deals','Deals'],['people','People'],['briefs','Briefs']];
+const AD_TABS = [['attn','Needs attention'],['deals','Deals'],['people','People'],['briefs','Briefs'],['ratings','Brand ratings']];
 const AD_STATUS = [['','All'],['applied','Applied'],['accepted','Accepted'],['sent','Video sent'],['approved','Approved'],['paid','Completed'],['declined','Declined']];
 const AD_PEOPLE = [['all','All'],['creator','Creators'],['brand','Brands'],['suspended','Suspended'],['unverified','Unverified creators']];
 const AD_COMP = {pay:'Payment', product:'Product only', both:'Product + payment'};
@@ -1465,9 +1496,17 @@ function adReasons(d){
 async function adLoad(){
   const [users, deals, briefs, lc] = await Promise.all([q(sb.rpc('admin_users')), q(sb.rpc('admin_deals')), q(sb.rpc('admin_briefs')),
     sb.rpc('launch_counts').then(r=>r.error?null:r.data, ()=>null), loadWork()]);
+  const ratings = S.cap && S.cap.extra ? await Promise.resolve().then(()=>sb.rpc('admin_brand_ratings')).then(r=>r && !r.error && Array.isArray(r.data) ? r.data : [], ()=>[]) : [];
   const old = S.adm || {};
   S.adm = {tab:old.tab||'attn', dstat:old.dstat||'', pf:old.pf||'all', pq:old.pq||'', confirm:null, fol:null,
-    users:users||[], deals:deals||[], briefs:briefs||[], launch:lc||null, lconf:null, loadedAt:new Date()};
+    users:users||[], deals:deals||[], briefs:briefs||[], ratings, launch:lc||null, lconf:null, loadedAt:new Date()};
+}
+function adRatings(){
+  const R = (S.adm && S.adm.ratings) || [], sc = v => v==null ? '–' : esc(String(v)) + '/5';
+  if(!R.length) return '<p class="meta">No brand ratings yet. Creators rate a brand after a Boli deal is paid.</p>';
+  return `<p class="meta">${R.length} rating${R.length===1?'':'s'} (latest first). Comments are private to the Boli team.</p>
+    <div class="panel">${R.map(r=>`<div class="person" style="flex-wrap:wrap"><div style="min-width:0;flex:1"><b>${esc(r.brand_name||r.brand||'Brand')}</b> <span class="meta">rated by ${esc(r.creator_name||r.creator||'a creator')} · ${adDate(r.created_at)}</span><br>
+      <span class="meta">Payment ${sc(r.payment)} · Communication ${sc(r.communication)} · Brief ${sc(r.brief)} · ${r.again?'Would work again':'Would not work again'}</span>${r.comment?`<p class="hook" style="margin-top:6px">${esc(r.comment)}</p>`:''}</div></div>`).join('')}</div>`;
 }
 async function openAdmin(){
   if(!(S.me && S.me.is_admin)) return go('home');
@@ -1569,14 +1608,14 @@ function vAdmin(){
     [U.filter(u=>adMs(u.created_at)>=wk).length, 'Sign-ups in the last 7 days'],
     [U.filter(u=>!u.confirmed).length, 'Emails not confirmed', 1],
     [U.filter(u=>u.plan_requested_at&&u.plan!=='sub').length, 'Subscription requests', 1]];
-  const body = A.tab==='deals' ? adDeals() : A.tab==='people' ? adPeople() : A.tab==='briefs' ? adBriefs() : adAttn();
+  const body = A.tab==='ratings' && S.cap && S.cap.extra ? adRatings() : A.tab==='deals' ? adDeals() : A.tab==='people' ? adPeople() : A.tab==='briefs' ? adBriefs() : adAttn();
   return `<div class="sec">
     <div class="ad-top"><div><span class="eyebrow">Boli team</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Overview</h1></div>
       <div class="ad-acts"><span class="meta">${A.loadedAt?'Updated '+adTime(A.loadedAt):''}</span><button class="pill" data-act="ad-refresh">Refresh</button></div></div>
     ${A.err?`<p class="meta">Could not load the latest data: ${esc(A.err)}</p>`:''}
     ${adLaunch()}
     <div class="ad-tiles">${tiles.map(([n,t,w])=>`<div class="ad-tile${w&&n?' warn':''}"><b>${num(n)}</b><span>${t}</span></div>`).join('')}</div>
-    <div class="chips" style="flex-wrap:wrap;overflow:visible" role="tablist" aria-label="Boli team sections">${AD_TABS.map(([k,t])=>`<button class="pill" role="tab" data-act="ad-tab" data-v="${k}" aria-selected="${A.tab===k}" aria-pressed="${A.tab===k}">${t}${k==='attn'&&attn?' · '+attn:''}</button>`).join('')}</div>
+    <div class="chips" style="flex-wrap:wrap;overflow:visible" role="tablist" aria-label="Boli team sections">${AD_TABS.filter(([k])=>k!=='ratings' || (S.cap && S.cap.extra)).map(([k,t])=>`<button class="pill" role="tab" data-act="ad-tab" data-v="${k}" aria-selected="${A.tab===k}" aria-pressed="${A.tab===k}">${t}${k==='attn'&&attn?' · '+attn:''}</button>`).join('')}</div>
     ${body}
   </div>`;
 }
@@ -1901,11 +1940,15 @@ function kitHTML(k, opts){
   return `<article class="k-rep t-${hue(cats[0])}">
     <div class="k-band">
       <div class="k-id"><span class="k-av" aria-hidden="true">${esc(ini(k.name))}</span><div style="min-width:0"><h1>${esc(k.name)}</h1>${place?`<div class="k-sub">${esc(place)}</div>`:''}</div></div>
-      <div class="k-chips">${k.verified?'<span class="k-chip solid">Verified</span>':''}${local?`<span class="k-chip solid">Local page: ${esc(local)}</span>`:''}${cats.map(c=>`<span class="k-chip">${esc(CATS[c]||c)}</span>`).join('')}${langs.map(l=>`<span class="k-chip">${esc(l)}</span>`).join('')}</div>
+      <div class="k-chips">${k.verified?'<span class="k-chip solid">Verified</span>':''}${local?`<span class="k-chip solid">Local page: ${esc(local)}</span>`:''}${k.collab_open===true?'<span class="k-chip solid">Open to creator collabs</span>':''}${cats.map(c=>`<span class="k-chip">${esc(CATS[c]||c)}</span>`).join('')}${langs.map(l=>`<span class="k-chip">${esc(l)}</span>`).join('')}</div>
       ${bio?`<p class="k-bio">${esc(bio)}</p>`:''}
+      ${k.collab_open===true && kStr(k.collab_note)?`<p class="k-bio">Collab ideas: ${esc(kStr(k.collab_note))}</p>`:''}
     </div>
     <div class="k-tiles">${tiles.join('')}</div>
     ${bcats.length?`<p class="meta">Has worked with brands in: ${esc(bcats.join(', '))}.</p>`:''}
+    ${(rc=>{ if(!rc || typeof rc!=='object') return ''; const L=[['reel','Reel'],['story','Story'],['post','Post'],['ugc','UGC video'],['integration','Integration'],['youtube','YouTube integration']].filter(([f])=>kInt(rc[f])>0);
+      const note = kStr(rc.note); if(!L.length && !note) return '';
+      return `<section class="k-sec"><h2>Rates</h2><div class="panel k-rates">${L.map(([f,t])=>`<div class="kv"><span>${t}</span><b>${rs(kInt(rc[f]))}</b></div>`).join('')}${note?`<p class="meta">${esc(note)}</p>`:''}</div></section>`; })(k.rate_card)}
     <section class="k-sec"><h2>Work samples</h2>
       ${samples.length ? `<div class="k-samples">${samples.map(sampleCard).join('')}</div>` : '<p class="meta">No samples added yet.</p>'}
       ${withViews.length>=2 ? `<div class="k-chart"><b>Views on these samples</b>${withViews.map(s=>`<div class="k-barrow"><div class="k-lab"><span>${esc(s.title)}</span><span>${num(s.views)}</span></div><div class="k-track"><div class="k-fill" style="width:${Math.max(2, Math.round(s.views/maxV*100))}%"></div></div></div>`).join('')}<span class="meta">Views and likes are entered by the creator.</span></div>`
@@ -2062,6 +2105,14 @@ document.addEventListener('error', e=>{
 .st-prev{border:1px solid var(--line);border-radius:14px;padding:14px;max-height:360px;overflow:auto;font-size:.9rem;overflow-wrap:anywhere}
 .st-msg{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border-radius:12px;padding:10px 12px;font-size:.92rem}
 .st-link{font-size:.82rem;color:var(--muted);overflow-wrap:anywhere}
+.st-tds{display:inline-flex;align-items:center;gap:6px;font-size:.82rem;color:var(--muted)}
+.st-tds input{width:96px;padding:6px 10px;font-size:.85rem}
+.st-est{width:100%;border-collapse:collapse;font-size:.92rem;font-variant-numeric:tabular-nums}
+.st-est td,.st-est th{padding:8px 4px;border-bottom:1px solid var(--line);text-align:left}
+.st-est td:last-child,.st-est th:last-child{text-align:right;white-space:nowrap}
+.st-how{font-size:.85rem;color:var(--muted)}
+.st-how ul{margin:6px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.st-lic{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
 @media (min-width:700px){.st-sum{grid-template-columns:repeat(5,minmax(0,1fr))}}
 @media (min-width:960px){
   .st-board.st-all{flex-direction:row;overflow-x:auto;align-items:flex-start;padding-bottom:10px}
@@ -2076,7 +2127,14 @@ document.addEventListener('error', e=>{
 </style>
 <script>
 /* ---------- Boli Studio: the creator's own business tools ---------- */
-const ST_TABS = [['board','Collaborations'],['invoices','Invoices'],['earnings','Earnings'],['enquiries','Enquiries']];
+const ST_TABS = [['board','Collaborations'],['invoices','Invoices'],['earnings','Earnings'],['expenses','Expenses'],['rates','Rates'],['licences','Licences'],['enquiries','Enquiries']];
+const ST_EXTRA_TABS = ['expenses','rates','licences'];
+const ST_MODETAB = {collab:'board', agr:'board', inv:'invoices', exp:'expenses'};
+const ST_EXPCAT = [['equipment','Equipment'],['travel','Travel'],['props','Props'],['software','Software & apps'],['phone_internet','Phone & internet'],['editing','Editing & freelancers'],['studio_rent','Studio rent'],['other','Other']];
+const ST_RECEIPT_TYPES = {'image/jpeg':'jpg','image/png':'png','image/webp':'webp','application/pdf':'pdf'};
+const ST_METRO = ['Mumbai','Pune','Thane','Delhi','Bengaluru','Hyderabad','Chennai','Kolkata','Ahmedabad'];
+const ST_NICHE = {tech:1.2, beauty:1.15, fashion:1.1, food:1.0, home:1.0, travel:1.05};
+const ST_RATEKEYS = [['reel','Reel'],['story','Story'],['post','Static post'],['ugc','UGC video (not posted on your page)'],['integration','Integration in your regular video'],['youtube','YouTube integration']];
 const ST_STATUS = [['lead','Lead'],['agreed','Agreed'],['shooting','Shooting'],['sent','Sent'],['posted','Posted'],['paid','Paid'],['cancelled','Cancelled']];
 const ST_FLOW = ['lead','agreed','shooting','sent','posted','paid'];
 const ST_KIND = {reel:'Reel', story:'Story', post:'Post', ugc:'UGC video', integration:'Integration', youtube:'YouTube video', other:'Other'};
@@ -2086,7 +2144,18 @@ const ST_MONTHS = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','
 const ST_APPMAP = {applied:'lead', accepted:'shooting', sent:'sent', approved:'posted', paid:'paid'};
 const ST_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function stS(){ if(!S.st) S.st = {tab:'board', collabs:[], invoices:[], enquiries:[], agreements:[], billing:null, loaded:false, filter:'all', showCancelled:false, mode:null, edit:{}, confirm:null, fy:null, err:null}; return S.st; }
+function stS(){ if(!S.st) S.st = {tab:'board', collabs:[], invoices:[], enquiries:[], agreements:[], billing:null, expenses:[], rate:null, licences:[], loaded:false, filter:'all', showCancelled:false, mode:null, edit:{}, confirm:null, fy:null, efy:null, err:null}; return S.st; }
+const stExtra = () => !!(S.cap && S.cap.extra);
+const stTabs = () => ST_TABS.filter(t=>stExtra() || !ST_EXTRA_TABS.includes(t[0]));
+const stCatLabel = k => (ST_EXPCAT.find(x=>x[0]===k)||['', 'Other'])[1];
+/* months are added on the calendar and clamped to the month end: 31 Jan + 1 month = 28 or 29 Feb */
+function stAddMonths(d, n){
+  if(!d) return ''; const y = +String(d).slice(0,4), m = +String(d).slice(5,7) - 1, day = +String(d).slice(8,10);
+  const t = new Date(Date.UTC(y, m + n, 1)), last = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  t.setUTCDate(Math.min(day, last)); return t.toISOString().slice(0,10);
+}
+const stDays = (from, to) => Math.round((new Date(String(to).slice(0,10)+'T00:00:00Z') - new Date(String(from).slice(0,10)+'T00:00:00Z')) / 864e5);
+function stUsageEnds(terms){ const t = terms || {}, m = stInt(t.usage_months); return m && t.post_date ? stAddMonths(t.post_date, m) : ''; }
 const stLabel = s => (ST_STATUS.find(x=>x[0]===s)||['',s])[1];
 const stIST = ts => ts ? new Date(new Date(ts).getTime() + 19800000).toISOString().slice(0,10) : '';
 const stDate = d => d ? new Date(String(d).slice(0,10)+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : '';
@@ -2118,19 +2187,25 @@ function stBoliDeals(){
 async function stLoad(){
   const st = stS(), uid = S.user.id;
   const t = p => Promise.resolve(p).then(r=>r && !r.error ? r.data : null, ()=>null);
-  const [c, i, e, a, b] = await Promise.all([
+  const ex = stExtra();
+  const [c, i, e, a, b, x, r, l] = await Promise.all([
     t(sb.from('collabs').select('*').eq('creator_id', uid).order('created_at', {ascending:false})),
     t(sb.from('invoices').select('*').eq('creator_id', uid).order('created_at', {ascending:false})),
     t(sb.from('enquiries').select('*').eq('creator_id', uid).order('created_at', {ascending:false})),
     t(sb.from('agreements').select('*').eq('creator_id', uid).order('created_at', {ascending:false})),
-    t(sb.from('billing').select('*').eq('creator_id', uid).maybeSingle())]);
-  st.collabs = c || []; st.invoices = i || []; st.enquiries = e || []; st.agreements = a || []; st.billing = b || null; st.loaded = true; st.loadedAt = Date.now();
+    t(sb.from('billing').select('*').eq('creator_id', uid).maybeSingle()),
+    ex ? t(sb.from('expenses').select('*').eq('creator_id', uid).order('spent_on', {ascending:false})) : null,
+    ex ? t(sb.from('rate_cards').select('*').eq('creator_id', uid).maybeSingle()) : null,
+    ex ? t(sb.rpc('my_licences')) : null]);
+  st.collabs = c || []; st.invoices = i || []; st.enquiries = e || []; st.agreements = a || []; st.billing = b || null;
+  st.expenses = x || []; st.rate = r || null; st.licences = Array.isArray(l) ? l : [];
+  st.loaded = true; st.loadedAt = Date.now();
 }
 async function openStudio(tab){
   if(!S.user || !S.me || S.me.role!=='creator'){ S.view='home'; S.arg=null; render(); return; }
   const st = stS();
-  const t = ST_TABS.some(x=>x[0]===tab) ? tab : 'board', fromOutside = S.view!=='studio';
-  if(st.tab!==t){ st.confirm = null; if(!(st.mode==='inv' && t==='invoices') && !((st.mode==='collab' || st.mode==='agr') && t==='board')) st.mode = null; }
+  const t = stTabs().some(x=>x[0]===tab) ? tab : 'board', fromOutside = S.view!=='studio' || S.st && S.st.tab!==tab;
+  if(st.tab!==t){ st.confirm = null; if(st.mode && ST_MODETAB[st.mode]!==t) st.mode = null; }
   st.tab = t; S.view = 'studio'; S.arg = t;
   if(!st.loaded){ render(); try{ await stLoad(); }catch(e){ st.err = 'Could not load your Studio. Refresh to try again.'; } }
   if(S.view!=='studio') return;
@@ -2153,15 +2228,17 @@ function vStudio(){
   const st = stS();
   if(!S.me || S.me.role!=='creator') return `<p class="meta">Studio is for creators.</p>`;
   const nw = st.enquiries.filter(e=>e.status==='new').length;
-  const tabs = `<nav class="st-tabs" aria-label="Studio sections">${ST_TABS.map(([k,t])=>`<button class="pill" data-act="st-tab" data-v="${k}" aria-pressed="${st.tab===k}">${t}${k==='enquiries'&&nw?`<span class="st-badge">${nw}</span>`:''}</button>`).join('')}</nav>`;
+  const tabs = `<nav class="st-tabs" aria-label="Studio sections">${stTabs().map(([k,t])=>`<button class="pill" data-act="st-tab" data-v="${k}" aria-pressed="${st.tab===k}">${t}${k==='enquiries'&&nw?`<span class="st-badge">${nw}</span>`:''}</button>`).join('')}</nav>`;
   let body;
   if(!st.loaded) body = st.err ? `<p class="meta">${esc(st.err)}</p>` : `<p class="meta">Loading your Studio…</p>`;
   else if(st.mode==='collab') body = stCollabEditor();
   else if(st.mode==='inv') body = stInvEditor();
   else if(st.mode==='agr') body = stAgrEditor();
-  else body = st.tab==='invoices' ? stInvoices() : st.tab==='earnings' ? stEarnings() : st.tab==='enquiries' ? stEnquiries() : stBoard();
+  else if(st.mode==='exp') body = stExpEditor();
+  else body = st.tab==='invoices' ? stInvoices() : st.tab==='earnings' ? stEarnings() : st.tab==='enquiries' ? stEnquiries()
+    : st.tab==='expenses' && stExtra() ? stExpenses() : st.tab==='rates' && stExtra() ? stRates() : st.tab==='licences' && stExtra() ? stLicences() : stBoard();
   return `<div class="st-wrap"><div class="st-head"><span class="eyebrow">Studio</span><h1>Your creator business</h1><p class="meta">Every collaboration, invoice and payment in one place, including deals that did not come through Boli.</p></div>
-    ${tabs}${st.loaded && !st.mode && st.tab!=='earnings' ? stSummary() : ''}${body}</div>`;
+    ${tabs}${st.loaded && !st.mode && ['board','invoices','enquiries'].includes(st.tab) ? stSummary() : ''}${body}</div>`;
 }
 function stConfirmHTML(key, label, yes){
   return S.st.confirm===key ? `<span class="st-confirm"><span>${label}</span><button class="pill" data-act="st-yes" data-v="${esc(key)}" aria-pressed="true">${yes}</button><button class="pill" data-act="st-no">Cancel</button></span>` : '';
@@ -2172,11 +2249,14 @@ function stCard(c){
   const st = S.st, od = !c.boli && stOverdueCollab(c);
   const money = [c.fee ? rs(c.fee) : '', c.product_note ? esc(c.product_note) + (c.product_value ? ' (' + rs(c.product_value) + ')' : '') : ''].filter(Boolean).join(' + ') || 'No fee set';
   const dates = [c.due_date ? 'Due ' + stDate(c.due_date) : '', c.post_date ? 'Post ' + stDate(c.post_date) : ''].filter(Boolean).join(' · ');
-  if(c.boli) return `<article class="st-card"><div class="st-top"><b>${esc(c.brand_name)}</b><span class="tag ok">On Boli</span></div><p>${esc(c.title)}</p><p class="meta">${money}</p><div class="st-acts"><button class="pill" data-act="brief" data-v="${esc(c.brief_id)}">Open brief</button><button class="pill" data-act="thread" data-v="${esc(c.id)}">Messages</button></div></article>`;
+  const canRate = c.boli && c.status==='paid' && stExtra() && S.myRatings instanceof Set && !S.myRatings.has(c.id);
+  if(c.boli) return `<article class="st-card"><div class="st-top"><b>${esc(c.brand_name)}</b><span class="tag ok">On Boli</span></div><p>${esc(c.title)}</p><p class="meta">${money}</p><div class="st-acts">${canRate?`<button class="pill" data-act="brief" data-v="${esc(c.brief_id)}" aria-pressed="true">Rate this brand</button>`:''}<button class="pill" data-act="brief" data-v="${esc(c.brief_id)}">Open brief</button><button class="pill" data-act="thread" data-v="${esc(c.id)}">Messages</button></div></article>`;
   const inv = stInvFor(c.id), agr = stAgrFor(c.id);
   const chips = [od ? '<span class="tag">Overdue</span>' : '',
     inv ? `<span class="tag ${inv.status==='paid'?'ok':stOverdueInv(inv)?'':inv.status==='sent'?'st-info':'st-mute'}">Invoice ${inv.status==='paid'?'paid':stOverdueInv(inv)?'overdue':inv.status==='sent'?'sent':'draft'}</span>` : '',
-    agr ? `<span class="tag ${agr.status==='accepted'?'ok':agr.status==='sent'?'st-info':'st-mute'}">${agr.status==='accepted'?'Agreement accepted' + (agr.brand_signed_name?' by '+esc(agr.brand_signed_name):'') + (agr.brand_signed_at?' on '+stDate(stIST(agr.brand_signed_at)):''):agr.status==='sent'?'Agreement sent':'Agreement draft'}</span>` : ''].join('');
+    agr ? `<span class="tag ${agr.status==='accepted'?'ok':agr.status==='sent'?'st-info':'st-mute'}">${agr.status==='accepted'?'Agreement accepted' + (agr.brand_signed_name?' by '+esc(agr.brand_signed_name):'') + (agr.brand_signed_at?' on '+stDate(stIST(agr.brand_signed_at)):''):agr.status==='sent'?'Agreement sent':'Agreement draft'}</span>` : '',
+    agr && agr.status==='accepted' && stUsageEnds(agr.terms) ? `<span class="tag ${stUsageEnds(agr.terms) < todayIN() ? 'st-mute' : 'st-info'}">${stUsageEnds(agr.terms) < todayIN() ? 'Ad rights ended ' : 'Ad rights until '}${stDate(stUsageEnds(agr.terms))}</span>` : '',
+    c.tds ? `<span class="tag st-mute">TDS ${rs(c.tds)}</span>` : ''].join('');
   const i = ST_FLOW.indexOf(c.status), next = i>=0 && i<ST_FLOW.length-1 ? ST_FLOW[i+1] : null;
   const k = 'collab:' + c.id;
   return `<article class="st-card"><div class="st-top"><b>${esc(c.brand_name)}</b><span class="tag st-mute">${esc(ST_KIND[c.kind]||'Other')}</span></div>
@@ -2219,6 +2299,7 @@ function stCollabEditor(){
     <div class="two"><label>Deliver by<input type="date" data-sf="collab.due_date" value="${v('due_date')}"></label><label>Posting date<input type="date" data-sf="collab.post_date" value="${v('post_date')}"></label></div>
     <div class="two"><label>Fee in ₹<input type="number" min="0" step="100" data-sf="collab.fee" data-t="int" value="${v('fee')}"></label><label>Status${sel('status', ST_STATUS)}</label></div>
     <div class="two"><label>Product received (optional)<input data-sf="collab.product_note" maxlength="150" value="${v('product_note')}"></label><label>Product value in ₹<input type="number" min="0" step="50" data-sf="collab.product_value" data-t="int" value="${v('product_value')}"></label></div>
+    ${stExtra()?`<label>TDS deducted by the brand (₹)<input type="number" min="0" step="1" data-sf="collab.tds" data-t="int" value="${v('tds')}" placeholder="0"></label><p class="meta">If the brand cut tax at source before paying you, enter it here so you can claim it back.</p>`:''}
     <label>Notes (optional)<textarea data-sf="collab.notes" rows="2" maxlength="1000">${v('notes')}</textarea></label>
     <p class="meta" id="stcErr" hidden></p>
     <div class="st-acts"><button class="btn accent" type="submit">${e.id?'Save changes':'Add collaboration'}</button><button type="button" class="btn ghost" data-act="st-back">Cancel</button></div>
@@ -2226,8 +2307,8 @@ function stCollabEditor(){
 }
 function stCollabPayload(e){
   const p = {};
-  ST_CFIELDS.forEach(k=>{ let x = e[k];
-    if(k==='fee' || k==='product_value') x = stInt(x);
+  ST_CFIELDS.concat(stExtra() ? ['tds'] : []).forEach(k=>{ let x = e[k];
+    if(k==='fee' || k==='product_value' || k==='tds') x = stInt(x);
     else if(k==='platform' || k==='kind' || k==='status') x = x || ({platform:'instagram', kind:'reel', status:'agreed'})[k];
     else x = stTxt(x);
     p[k] = x; });
@@ -2249,9 +2330,9 @@ function stInvoices(){
   return head + bill + list.map(i=>{
     const k = 'void:' + i.id;
     const acts = i.status==='draft' ? `<button class="pill" data-act="st-iopen" data-v="${esc(i.id)}">Edit</button><button class="pill" data-act="st-isend" data-v="${esc(i.id)}" aria-pressed="true">Send to brand</button>${st.confirm===k?'':`<button class="pill" data-act="st-ask" data-v="${esc(k)}">Void</button>`}`
-      : i.status==='sent' ? `<button class="pill" data-act="st-icopy" data-v="${esc(i.id)}">Copy link</button><button class="pill" data-act="st-iview" data-v="${esc(i.id)}">View</button>${i.buyer&&i.buyer.email?`<button class="pill" data-act="st-irem" data-v="${esc(i.id)}">Send reminder</button>`:''}<button class="pill" data-act="st-ipaid" data-v="${esc(i.id)}" aria-pressed="true">Mark as paid</button>${st.confirm===k?'':`<button class="pill" data-act="st-ask" data-v="${esc(k)}">Void</button>`}`
-      : i.status==='paid' ? `<button class="pill" data-act="st-iview" data-v="${esc(i.id)}">View</button><button class="pill" data-act="st-iunpaid" data-v="${esc(i.id)}">Undo paid</button>` : '';
-    const meta = [i.issue_date?'Issued '+stDate(i.issue_date):'', i.due_date&&i.status!=='paid'&&i.status!=='void'?'Due '+stDate(i.due_date):'', i.status==='paid'&&i.paid_at?'Paid '+stDate(stIST(i.paid_at)):''].filter(Boolean).join(' · ');
+      : i.status==='sent' ? `<button class="pill" data-act="st-icopy" data-v="${esc(i.id)}">Copy link</button><button class="pill" data-act="st-iview" data-v="${esc(i.id)}">View</button>${i.buyer&&i.buyer.email?`<button class="pill" data-act="st-irem" data-v="${esc(i.id)}">Send reminder</button>`:''}${stExtra()?`<label class="st-tds">TDS ₹<input type="number" min="0" step="1" id="stTds-${esc(i.id)}" value="${i.tds||0}" aria-label="TDS deducted by the brand"></label>`:''}<button class="pill" data-act="st-ipaid" data-v="${esc(i.id)}" aria-pressed="true">Mark as paid</button>${st.confirm===k?'':`<button class="pill" data-act="st-ask" data-v="${esc(k)}">Void</button>`}`
+      : i.status==='paid' ? `<button class="pill" data-act="st-iview" data-v="${esc(i.id)}">View</button><button class="pill" data-act="st-iunpaid" data-v="${esc(i.id)}">Undo paid</button>${stExtra()?`<label class="st-tds">TDS ₹<input type="number" min="0" step="1" id="stTds-${esc(i.id)}" value="${i.tds||0}" aria-label="TDS deducted by the brand"></label><button class="pill" data-act="st-itds" data-v="${esc(i.id)}">Save TDS</button>`:''}` : '';
+    const meta = [i.issue_date?'Issued '+stDate(i.issue_date):'', i.due_date&&i.status!=='paid'&&i.status!=='void'?'Due '+stDate(i.due_date):'', i.status==='paid'&&i.paid_at?'Paid '+stDate(stIST(i.paid_at)):'', i.tds?'TDS '+rs(i.tds):''].filter(Boolean).join(' · ');
     const extra = [i.viewed_at ? 'Viewed by the brand on ' + stDate(stIST(i.viewed_at)) : '', i.last_reminder_at ? 'Last reminder ' + stDate(stIST(i.last_reminder_at)) + (i.reminders_sent ? ' (' + i.reminders_sent + ' sent)' : '') : ''].filter(Boolean).join(' · ');
     return `<article class="st-card"><div class="st-top"><b>${esc(i.number||'Draft')} · ${esc((i.buyer||{}).name||'')}</b>${stInvChip(i)}</div>
       <div class="st-row"><span class="meta">${meta}</span><b>${rs(i.total)}</b></div>${extra?`<p class="meta">${extra}</p>`:''}
@@ -2332,14 +2413,15 @@ async function stInvSend(id){
 /* ---------- 3. earnings ---------- */
 function stRecords(){
   const st = S.st, rows = [], invBy = {};
-  st.invoices.forEach(i=>{ if(i.collab_id && i.status==='paid') invBy[i.collab_id] = i.number; });
+  const invTds = {};
+  st.invoices.forEach(i=>{ if(i.collab_id && i.status==='paid'){ invBy[i.collab_id] = i.number; invTds[i.collab_id] = i.tds||0; } });
   st.collabs.forEach(c=>{
-    if(c.status==='paid') rows.push({date:stIST(c.paid_at) || c.post_date || stIST(c.updated_at), brand:c.brand_name, title:c.title, source:'Collaboration', kind:ST_KIND[c.kind]||'Other', amount:c.fee||0, product:c.product_value||0, invoice:invBy[c.id]||'', paid:true});
-    else if(c.status==='posted' && c.product_value) rows.push({date:c.post_date || stIST(c.updated_at), brand:c.brand_name, title:c.title, source:'Collaboration', kind:ST_KIND[c.kind]||'Other', amount:0, product:c.product_value, invoice:'', paid:false});
+    if(c.status==='paid') rows.push({date:stIST(c.paid_at) || c.post_date || stIST(c.updated_at), brand:c.brand_name, title:c.title, source:'Collaboration', kind:ST_KIND[c.kind]||'Other', amount:c.fee||0, product:c.product_value||0, invoice:invBy[c.id]||'', tds:c.tds||invTds[c.id]||0, paid:true});
+    else if(c.status==='posted' && c.product_value) rows.push({date:c.post_date || stIST(c.updated_at), brand:c.brand_name, title:c.title, source:'Collaboration', kind:ST_KIND[c.kind]||'Other', amount:0, product:c.product_value, invoice:'', tds:0, paid:false});
   });
-  st.invoices.forEach(i=>{ if(!i.collab_id && i.status==='paid') rows.push({date:stIST(i.paid_at) || i.issue_date, brand:(i.buyer||{}).name||'', title:((i.items||[])[0]||{}).desc||'', source:'Invoice', kind:'Invoice', amount:i.total||0, product:0, invoice:i.number||'', paid:true}); });
+  st.invoices.forEach(i=>{ if(!i.collab_id && i.status==='paid') rows.push({date:stIST(i.paid_at) || i.issue_date, brand:(i.buyer||{}).name||'', title:((i.items||[])[0]||{}).desc||'', source:'Invoice', kind:'Invoice', amount:i.total||0, product:0, invoice:i.number||'', tds:i.tds||0, paid:true}); });
   (S.apps||[]).forEach(a=>{ const b = a.briefs; if(!b || a.status!=='paid') return; const prod = b.comp==='product' || b.comp==='both';
-    rows.push({date:stIST(a.updated_at || a.created_at), brand:b.brand_name, title:b.title, source:'Boli', kind:'Boli deal', amount:b.comp==='product'?0:(b.pay||0), product:prod?(b.product_value||0):0, invoice:'', paid:true}); });
+    rows.push({date:stIST(a.updated_at || a.created_at), brand:b.brand_name, title:b.title, source:'Boli', kind:'Boli deal', amount:b.comp==='product'?0:(b.pay||0), product:prod?(b.product_value||0):0, invoice:'', tds:0, paid:true}); });
   return rows.filter(r=>r.date);
 }
 function stPending(){
@@ -2348,8 +2430,8 @@ function stPending(){
   return inv.reduce((t,i)=>t+(i.total||0), 0) + st.collabs.filter(c=>['agreed','shooting','sent','posted'].includes(c.status) && !withInv.has(c.id)).reduce((t,c)=>t+(c.fee||0), 0);
 }
 function stEarnings(){
-  const st = S.st, all = stRecords(), cur = stFY(todayIN());
-  const fys = [...new Set([cur, ...all.map(r=>stFY(r.date))])].sort().reverse();
+  const st = S.st, all = stRecords(), cur = stFY(todayIN()), ex = stExtra();
+  const fys = [...new Set([cur, ...all.map(r=>stFY(r.date)), ...(ex ? st.expenses.map(x=>stFY(x.spent_on)) : [])])].filter(Boolean).sort().reverse();
   const fy = fys.includes(st.fy) ? st.fy : cur;
   const rows = all.filter(r=>stFY(r.date)===fy).sort((a,b)=>a.date<b.date?-1:1);
   const earned = rows.reduce((t,r)=>t+r.amount, 0), prod = rows.reduce((t,r)=>t+r.product, 0);
@@ -2358,10 +2440,13 @@ function stEarnings(){
   const max = Math.max(1, ...months);
   const brands = {}, kinds = {}; rows.forEach(r=>{ if(!r.amount) return; brands[r.brand] = (brands[r.brand]||0) + r.amount; kinds[r.kind] = (kinds[r.kind]||0) + r.amount; });
   const tbl = (o, h) => { const e = Object.entries(o).sort((a,b)=>b[1]-a[1]).slice(0,8); return e.length ? `<table class="st-table"><thead><tr><th>${h}</th><th>Earned</th></tr></thead><tbody>${e.map(([k,v])=>`<tr><td>${esc(k)}</td><td>${rs(v)}</td></tr>`).join('')}</tbody></table>` : '<p class="meta">Nothing earned yet in this year.</p>'; };
-  const tile = (v, l) => `<div class="st-tile"><b>${v}</b><span>${l}</span></div>`;
+  const tile = (v, l, w) => `<div class="st-tile${w?' warn':''}"><b>${v}</b><span>${l}</span></div>`;
+  const tds = rows.reduce((t,r)=>t+(r.tds||0), 0), spent = ex ? st.expenses.filter(x=>stFY(x.spent_on)===fy).reduce((t,x)=>t+(x.amount||0), 0) : 0;
+  const net = earned - tds, profit = net - spent;
+  const money = ex ? `<div class="st-sum">${tile(rs(earned),'Gross earned')}${tile(rs(tds),'TDS deducted')}${tile(rs(net),'Net received')}${tile(rs(spent),'Expenses')}${tile(rs(profit),'Profit (net − expenses)', profit<0)}</div>` : '';
   return `<div class="st-row"><h2>Earnings</h2><button class="pill" data-act="st-csv" data-v="${esc(fy)}">Download CSV</button></div>
     <div class="st-filters" role="group" aria-label="Financial year">${fys.map(f=>`<button class="pill" data-act="st-fy" data-v="${esc(f)}" aria-pressed="${f===fy}">FY ${esc(f)}</button>`).join('')}</div>
-    <div class="st-sum">${tile(rs(earned),'Earned in FY '+esc(fy))}${tile(rs(stPending()),'Pending now')}${tile(rs(prod),'Products received')}${tile(num(paid),'Paid deals')}${tile(rs(paid?Math.round(earned/paid):0),'Average per deal')}</div>
+    ${money}<div class="st-sum">${ex?'':tile(rs(earned),'Earned in FY '+esc(fy))}${tile(rs(stPending()),'Pending now')}${tile(rs(prod),'Products received')}${tile(num(paid),'Paid deals')}${tile(rs(paid?Math.round(earned/paid):0),'Average per deal')}</div>
     <div class="panel"><b>Month by month</b><div class="st-bars" role="img" aria-label="Earnings by month">${months.map((v,n)=>`<div class="st-bar"><em>${v?rs(v):''}</em><i class="${v?'':'zero'}" style="height:${v?Math.max(3, Math.round(v/max*120)):2}px"></i><span>${ST_MONTHS[n]}</span></div>`).join('')}</div></div>
     <div class="split"><div class="panel"><b>Top brands</b>${tbl(brands,'Brand')}</div><div class="panel"><b>By type</b>${tbl(kinds,'Type')}</div></div>
     <p class="meta">For your records. Check tax questions with your CA.</p>`;
@@ -2369,7 +2454,14 @@ function stEarnings(){
 function stCSV(fy){
   const rows = stRecords().filter(r=>stFY(r.date)===fy).sort((a,b)=>a.date<b.date?-1:1);
   const c = x => { const s = String(x==null?'':x); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
-  const lines = [['date','brand','title','source','amount','product value','invoice number'].join(',')].concat(rows.map(r=>[r.date, r.brand, r.title, r.source, r.amount, r.product, r.invoice].map(c).join(',')));
+  if(!stExtra()){
+    const lines = [['date','brand','title','source','amount','product value','invoice number'].join(',')].concat(rows.map(r=>[r.date, r.brand, r.title, r.source, r.amount, r.product, r.invoice].map(c).join(',')));
+    return lines.join('\n') + '\n';
+  }
+  const exp = S.st.expenses.filter(x=>stFY(x.spent_on)===fy).sort((a,b)=>a.spent_on<b.spent_on?-1:1);
+  const lines = [['date','brand','title','source','amount','tds','net','product value','invoice number'].join(',')]
+    .concat(rows.map(r=>[r.date, r.brand, r.title, r.source, r.amount, r.tds||0, r.amount-(r.tds||0), r.product, r.invoice].map(c).join(',')))
+    .concat(exp.map(x=>[x.spent_on, '', stCatLabel(x.category) + (x.note ? ' — ' + x.note : ''), 'Expense', -(x.amount||0), 0, -(x.amount||0), 0, ''].map(c).join(',')));
   return lines.join('\n') + '\n';
 }
 
@@ -2439,6 +2531,142 @@ async function stAgrSave(){
   return row;
 }
 
+
+/* ---------- 6. expenses ---------- */
+function stExpenses(){
+  const st = S.st, cur = stFY(todayIN());
+  const fys = [...new Set([cur, ...st.expenses.map(x=>stFY(x.spent_on))])].filter(Boolean).sort().reverse();
+  const fy = fys.includes(st.efy) ? st.efy : cur;
+  const list = st.expenses.filter(x=>stFY(x.spent_on)===fy);
+  const total = list.reduce((t,x)=>t+(x.amount||0), 0);
+  const by = {}; list.forEach(x=>{ by[x.category] = (by[x.category]||0) + (x.amount||0); });
+  const head = `<div class="st-row"><h2>Expenses</h2><span class="st-acts"><button class="pill" data-act="st-xcsv" data-v="${esc(fy)}">Download CSV</button><button class="btn accent" data-act="st-xnew">Add an expense</button></span></div>
+    <div class="st-filters" role="group" aria-label="Financial year">${fys.map(f=>`<button class="pill" data-act="st-efy" data-v="${esc(f)}" aria-pressed="${f===fy}">FY ${esc(f)}</button>`).join('')}</div>`;
+  if(!list.length) return head + `<div class="panel"><h3>No expenses in FY ${esc(fy)}</h3><p class="meta">Add what you spend on your work: camera, lights, travel, props, apps, editing help. Your earnings then show profit, not just income. Keep the receipts here too.</p><div><button class="btn" data-act="st-xnew">Add your first expense</button></div></div>`;
+  const cats = Object.entries(by).sort((a,b)=>b[1]-a[1]);
+  return head + `<div class="st-sum"><div class="st-tile"><b>${rs(total)}</b><span>Spent in FY ${esc(fy)}</span></div><div class="st-tile"><b>${num(list.length)}</b><span>Expenses</span></div></div>
+    <div class="panel"><b>By category</b><table class="st-table"><thead><tr><th>Category</th><th>Spent</th></tr></thead><tbody>${cats.map(([k,v])=>`<tr><td>${esc(stCatLabel(k))}</td><td>${rs(v)}</td></tr>`).join('')}</tbody></table></div>`
+    + list.map(x=>{ const k = 'exp:' + x.id;
+      return `<article class="st-card"><div class="st-top"><b>${esc(stCatLabel(x.category))}</b><b>${rs(x.amount)}</b></div>
+        <p class="meta">${stDate(x.spent_on)}${x.note?' · '+esc(x.note):''}</p>
+        <div class="st-acts">${x.receipt_path?`<button class="pill" data-act="st-xrec" data-v="${esc(x.id)}">View receipt</button>`:''}<button class="pill" data-act="st-xedit" data-v="${esc(x.id)}">Edit</button>${st.confirm===k?'':`<button class="pill" data-act="st-ask" data-v="${esc(k)}">Delete</button>`}</div>
+        ${stConfirmHTML(k, 'Delete this expense' + (x.receipt_path ? ' and its receipt' : '') + '?', 'Yes, delete')}</article>`; }).join('')
+    + `<p class="meta">For your records. Check with your CA which expenses you can claim.</p>`;
+}
+function stExpEditor(){
+  const e = S.st.edit.exp || {}, v = k => esc(e[k]==null?'':e[k]);
+  return `<form id="stExpForm" class="panel st-form" novalidate>
+    <button type="button" class="link" data-act="st-back">‹ Back to expenses</button>
+    <h2>${e.id?'Edit expense':'New expense'}</h2>
+    <div class="two"><label>Date<input type="date" data-sf="exp.spent_on" value="${v('spent_on')}"></label><label>Category<select data-sf="exp.category">${ST_EXPCAT.map(([a,b])=>`<option value="${a}"${e.category===a?' selected':''}>${b}</option>`).join('')}</select></label></div>
+    <label>Amount in ₹<input type="number" min="1" step="1" data-sf="exp.amount" value="${v('amount')}" placeholder="e.g. 2499"></label>
+    <label>Note (optional)<input data-sf="exp.note" maxlength="200" value="${v('note')}" placeholder="e.g. Ring light for indoor reels"></label>
+    ${e.receipt_path && !e.removeReceipt ? `<div class="st-row"><span class="meta">Receipt attached</span><span class="st-acts"><button type="button" class="pill" data-act="st-xrec" data-v="${esc(e.id)}">View</button><button type="button" class="pill" data-act="st-xrm">Remove</button></span></div>` : ''}
+    <label>${e.receipt_path && !e.removeReceipt ? 'Replace receipt' : 'Receipt (optional)'}<input type="file" id="stExpFile" accept="image/jpeg,image/png,image/webp,application/pdf"></label>
+    <p class="meta">A photo or PDF, up to 5 MB. Only you can see it.</p>
+    <p class="meta" id="stxErr" hidden></p>
+    <div class="st-acts"><button class="btn accent" type="submit">${e.id?'Save changes':'Add expense'}</button><button type="button" class="btn ghost" data-act="st-back">Cancel</button></div>
+  </form>`;
+}
+function stExpCSV(fy){
+  const c = x => { const s = String(x==null?'':x); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
+  const list = S.st.expenses.filter(x=>stFY(x.spent_on)===fy).sort((a,b)=>a.spent_on<b.spent_on?-1:1);
+  return [['date','category','amount','note','receipt'].join(',')].concat(list.map(x=>[x.spent_on, stCatLabel(x.category), x.amount, x.note||'', x.receipt_path?'yes':'no'].map(c).join(','))).join('\n') + '\n';
+}
+function stDownload(text, name){ const blob = new Blob([text], {type:'text/csv;charset=utf-8'}); const u = URL.createObjectURL(blob); const l = document.createElement('a'); l.href = u; l.download = name; document.body.appendChild(l); l.click(); l.remove(); setTimeout(()=>URL.revokeObjectURL(u), 1000); }
+async function stOpenReceipt(path){
+  const w = window.open('about:blank', '_blank');
+  const r = await sb.storage.from('receipts').createSignedUrl(path, 300);
+  if(r.error || !r.data){ if(w) w.close(); throw new Error('Could not open the receipt. Please try again.'); }
+  const u = r.data.signedUrl;
+  if(w) w.location = u; else location.href = u;
+}
+
+/* ---------- 7. rates ---------- */
+/* How we round: reel figures go to the nearest ₹100 (₹50 rounds up). Story, post, integration and
+   YouTube are a share of that rounded reel figure, rounded to the nearest ₹100 (₹50 rounds down).
+   Then the minimums apply: ₹500 for everything, ₹1,500 for UGC. */
+const stClean = x => Math.round(x * 1000) / 1000;
+const stUp100 = x => Math.floor(stClean(x) / 100 + 0.5) * 100;
+const stDown100 = x => Math.ceil(stClean(x) / 100 - 0.5) * 100;
+function stCalcDefaults(){ const m = S.me || {}; return {followers: m.followers || '', views:'', niche: ((m.cats||[]).find(c=>ST_NICHE[c]!=null)) || 'food', metro: ST_METRO.includes(m.city) ? 'metro' : 'other'}; }
+function stEstimate(c){
+  const f = stInt(c.followers), v = stInt(c.views), mult = (ST_NICHE[c.niche] || 1) * (c.metro==='metro' ? 1.1 : 1);
+  let lo = f * 0.35 * mult, hi = f * 0.80 * mult;
+  if(v){ const vlo = v * 0.30 * mult, vhi = v * 0.70 * mult; if(vlo + vhi > lo + hi){ lo = vlo; hi = vhi; } }
+  const reel = [Math.max(500, stUp100(lo)), Math.max(500, stUp100(hi))];
+  const share = p => [Math.max(500, stDown100(reel[0] * p)), Math.max(500, stDown100(reel[1] * p))];
+  const ugc = f < 10000 ? [1500, 4000] : f < 50000 ? [3000, 8000] : [5000, 15000];
+  return {reel, story:share(0.35), post:share(0.5), ugc, integration:share(0.7), youtube:share(1.2), byViews: !!v && (v*0.30 + v*0.70) > (f*0.35 + f*0.80)};
+}
+function stRateOutHTML(){
+  const c = S.st.edit.calc || stCalcDefaults();
+  if(!stInt(c.followers) && !stInt(c.views)) return '<p class="meta">Enter your followers to see an estimate.</p>';
+  const e = stEstimate(c);
+  return `<table class="st-est"><thead><tr><th>Format</th><th>Suggested range</th></tr></thead><tbody>${ST_RATEKEYS.map(([k,t])=>`<tr><td>${esc(t)}</td><td>${rs(e[k][0])} – ${rs(e[k][1])}</td></tr>`).join('')}</tbody></table>
+    ${e.byViews?'<p class="meta">Based on your average views, which gave a higher estimate than your followers.</p>':''}
+    <p class="meta">A starting point based on simple rules, not market data. Adjust for your audience and the work involved.</p>`;
+}
+function stRates(){
+  const st = S.st, ed = st.edit;
+  if(!ed.calc) ed.calc = stCalcDefaults();
+  if(!ed.rate){ const r = st.rate || {}; ed.rate = {reel:r.reel==null?'':r.reel, story:r.story==null?'':r.story, post:r.post==null?'':r.post, ugc:r.ugc==null?'':r.ugc, integration:r.integration==null?'':r.integration, youtube:r.youtube==null?'':r.youtube, note:r.note||''}; }
+  const c = ed.calc, r = ed.rate, v = x => esc(x==null?'':x);
+  const showRate = S.me && S.me.show_rate !== false;
+  return `<h2>Rates</h2>
+    <div class="panel st-form"><b>Rate calculator</b>
+      <div class="two"><label>Followers<input type="number" min="0" step="1" data-sf="calc.followers" data-calc="1" value="${v(c.followers)}"></label><label>Average reel views (optional)<input type="number" min="0" step="1" data-sf="calc.views" data-calc="1" value="${v(c.views)}" placeholder="e.g. 8000"></label></div>
+      <div class="two"><label>Niche<select data-sf="calc.niche" data-calc="1">${Object.keys(ST_NICHE).map(k=>`<option value="${k}"${c.niche===k?' selected':''}>${esc(CATS[k]||k)}</option>`).join('')}</select></label>
+        <label>City<select data-sf="calc.metro" data-calc="1"><option value="metro"${c.metro==='metro'?' selected':''}>Metro city</option><option value="other"${c.metro!=='metro'?' selected':''}>Other city or town</option></select></label></div>
+      <div id="stRateOut">${stRateOutHTML()}</div>
+      <details class="st-how"><summary>How we estimate</summary><ul>
+        <li>Reel: followers × ₹0.35 to ₹0.80. If you enter average views and they give more, we use views × ₹0.30 to ₹0.70 instead.</li>
+        <li>Niche: Apps &amp; tech × 1.2, Beauty × 1.15, Fashion × 1.1, Travel × 1.05, Food and Home × 1.0. Metro cities (${ST_METRO.join(', ')}) × 1.1.</li>
+        <li>The reel figures are rounded to the nearest ₹100 (₹50 rounds up).</li>
+        <li>Story 35%, static post 50%, integration 70% and YouTube integration 120% of the rounded reel figures, each rounded to the nearest ₹100 (₹50 rounds down).</li>
+        <li>UGC video: ₹1,500–₹4,000 under 10,000 followers, ₹3,000–₹8,000 under 50,000, ₹5,000–₹15,000 above.</li>
+        <li>Nothing goes below ₹500, and UGC never below ₹1,500.</li></ul></details>
+    </div>
+    <form id="stRateForm" class="panel st-form" novalidate><div class="st-row"><b>Your rate card</b><button type="button" class="pill" data-act="st-rmid">Use the middle of these estimates</button></div>
+      <div class="two">${ST_RATEKEYS.slice(0,2).map(([k,t])=>`<label>${esc(t)} (₹)<input type="number" min="0" step="100" data-sf="rate.${k}" value="${v(r[k])}"></label>`).join('')}</div>
+      <div class="two">${ST_RATEKEYS.slice(2,4).map(([k,t])=>`<label>${esc(t)} (₹)<input type="number" min="0" step="100" data-sf="rate.${k}" value="${v(r[k])}"></label>`).join('')}</div>
+      <div class="two">${ST_RATEKEYS.slice(4,6).map(([k,t])=>`<label>${esc(t)} (₹)<input type="number" min="0" step="100" data-sf="rate.${k}" value="${v(r[k])}"></label>`).join('')}</div>
+      <label>Note (optional)<input data-sf="rate.note" maxlength="300" value="${v(r.note)}" placeholder="e.g. Rates are for one round of changes. Usage rights extra."></label>
+      <p class="meta">Shown on your public profile when 'Show my rate' is on in Account.${showRate?'':' It is off right now.'}</p>
+      <p class="meta" id="strErr" hidden></p>
+      <div class="st-acts"><button class="btn accent" type="submit">Save rate card</button>${!showRate?'<button type="button" class="pill" data-act="nav" data-v="account">Open Account</button>':''}</div>
+    </form>`;
+}
+function stRatePayload(r){
+  const n = x => { const t = String(x==null?'':x).trim(); return t==='' ? null : stInt(t); };
+  return {reel:n(r.reel), story:n(r.story), post:n(r.post), ugc:n(r.ugc), integration:n(r.integration), youtube:n(r.youtube), note:stTxt(r.note)};
+}
+
+/* ---------- 8. licences ---------- */
+function stLicences(){
+  const st = S.st, today = todayIN();
+  const rows = st.licences.slice();
+  const tok = id => { const a = st.agreements.find(x=>x.id===id); return a && a.token; };
+  const row = (l, kind) => {
+    const end = kind==='excl' ? l.exclusivity_ends : l.usage_ends, left = stDays(today, end);
+    const what = kind==='excl' ? `Exclusivity ${num(l.exclusivity_days)} days` : `Ad rights ${num(l.usage_months)} month${l.usage_months==1?'':'s'}`;
+    const chip = left < 0 ? `<span class="tag st-mute">Ended ${stDate(end)}</span>` : left===0 ? '<span class="tag">Ends today</span>' : `<span class="tag${left<=7?'':' st-info'}">${num(left)} day${left===1?'':'s'} left</span>`;
+    const t = tok(l.agreement_id);
+    return `<article class="st-card"><div class="st-lic"><b>${esc(l.brand_name||'')}</b>${chip}</div><p>${esc(l.title||'')}</p>
+      <p class="meta">${what} · Posted ${stDate(l.post_date)} · ${left<0?'Ended':'Ends'} ${stDate(end)}</p>
+      ${t?`<div class="st-acts"><button class="pill" data-act="st-lagr" data-v="${esc(l.agreement_id)}">See agreement</button></div>`:''}</article>`;
+  };
+  const usage = rows.filter(l=>l.usage_ends && l.usage_ends >= today).sort((a,b)=>a.usage_ends<b.usage_ends?-1:1);
+  const excl = rows.filter(l=>l.exclusivity_ends && l.exclusivity_ends >= today).sort((a,b)=>a.exclusivity_ends<b.exclusivity_ends?-1:1);
+  const since = stAdd(today, -90), ended = [];
+  rows.forEach(l=>{ if(l.usage_ends && l.usage_ends < today && l.usage_ends >= since) ended.push([l,'usage',l.usage_ends]); if(l.exclusivity_ends && l.exclusivity_ends < today && l.exclusivity_ends >= since) ended.push([l,'excl',l.exclusivity_ends]); });
+  ended.sort((a,b)=>a[2]<b[2]?1:-1);
+  const head = `<h2>Licences</h2><p class="meta">How long brands may use your videos in their own posts and ads, and how long you agreed not to work with their competitors. We email you a week before ad rights end and when they end.</p>`;
+  if(!usage.length && !excl.length && !ended.length) return head + `<div class="panel"><h3>Nothing to track yet</h3><p class="meta">This fills in from agreements a brand has accepted that have a posting date and ad rights or exclusivity. Create an agreement from any collaboration.</p><div><button class="pill" data-act="st-tab" data-v="board">Go to collaborations</button></div></div>`;
+  const sec = (t, h) => h ? `<section class="st-col"><h3>${t}</h3>${h}</section>` : '';
+  return head + sec('Ad rights active', usage.map(l=>row(l,'usage')).join('')) + sec('Exclusivity active', excl.map(l=>row(l,'excl')).join('')) + sec('Ended in the last 90 days', ended.map(([l,k])=>row(l,k)).join(''));
+}
+
 /* ---------- state binding ---------- */
 function stSet(path, val){
   const parts = path.split('.'); let o = S.st.edit;
@@ -2456,15 +2684,28 @@ function stBind(ev){
   if(el.dataset.tot){ const e = S.st.edit.inv; const tot = $('stInvTot'); if(tot && e) tot.innerHTML = stTotHTML(e);
     const m = el.dataset.sf.match(/^inv\.items\.(\d+)\./); if(m){ const it = e.items[+m[1]], a = document.querySelector(`[data-amt="${m[1]}"]`); if(a && a.firstChild) a.firstChild.nodeValue = rs(Math.round(stNum(it.qty)*stNum(it.rate))) + (e.items.length>1?' ':''); } }
   if(el.dataset.prev){ const p = $('stAgrPrev'); if(p && S.st.edit.agr) p.innerHTML = stAgrPreview(S.st.edit.agr.terms); }
+  if(el.dataset.calc){ const o = $('stRateOut'); if(o) o.innerHTML = stRateOutHTML(); }
 }
 function stRender(){ const y = window.scrollY; render(); window.scrollTo(0, y); }
-function stOpenMode(mode, tab){ const st = S.st; st.mode = mode; st.confirm = null; if(S.arg!==tab){ st.tab = tab; go('studio', tab); } else { render(); } window.scrollTo(0,0); }
+function stOpenMode(mode, tab){ /* mode opens an editor in place of the tab body */ const st = S.st; st.mode = mode; st.confirm = null; if(S.arg!==tab){ st.tab = tab; go('studio', tab); } else { render(); } window.scrollTo(0,0); }
 
 /* ---------- events ---------- */
 document.addEventListener('click', ev=>{
   const el = ev.target.closest('[data-act^="st-"]'); if(!el || el.disabled) return;
   const a = el.dataset.act, v = el.dataset.v, st = stS();
-  if(a==='st-tab'){ st.confirm = null; if(st.mode && !((st.mode==='inv' && v==='invoices') || ((st.mode==='collab'||st.mode==='agr') && v==='board'))) st.mode = null; return go('studio', v); }
+  if(a==='st-tab'){ st.confirm = null; if(st.mode && ST_MODETAB[st.mode]!==v) st.mode = null; return go('studio', v); }
+  if(a==='st-efy'){ st.efy = v; return stRender(); }
+  if(a==='st-xnew'){ st.edit.exp = {spent_on:todayIN(), category:'equipment', amount:'', note:'', receipt_path:null}; return stOpenMode('exp', 'expenses'); }
+  if(a==='st-xedit'){ const x = st.expenses.find(y=>y.id===v); if(!x) return; st.edit.exp = {...x}; return stOpenMode('exp', 'expenses'); }
+  if(a==='st-xrm'){ if(st.edit.exp){ st.edit.exp.removeReceipt = true; stRender(); } return; }
+  if(a==='st-xrec') return run(async()=>{ const x = st.expenses.find(y=>y.id===v) || (st.edit.exp && st.edit.exp.id===v ? st.edit.exp : null); if(x && x.receipt_path) await stOpenReceipt(x.receipt_path); });
+  if(a==='st-xcsv'){ stDownload(stExpCSV(v), 'boli-expenses-' + v + '.csv'); return; }
+  if(a==='st-rmid'){ const e = stEstimate(st.edit.calc || stCalcDefaults()), r = st.edit.rate || (st.edit.rate = {});
+    ST_RATEKEYS.forEach(([k])=>{ r[k] = stUp100((e[k][0] + e[k][1]) / 2); }); return stRender(); }
+  if(a==='st-lagr'){ const g = st.agreements.find(x=>x.id===v); if(g && g.token) go('a', g.token); return; }
+  if(a==='st-itds') return run(async()=>{ const i = st.invoices.find(x=>x.id===v), inp = $('stTds-' + v), t = stInt(inp ? inp.value : 0);
+    if(i && t > (i.total||0)) return toast('TDS cannot be more than the invoice total.');
+    await q(sb.from('invoices').update({tds:t}).eq('id', v)); await stReload('TDS saved'); });
   if(a==='st-filter'){ st.filter = v; return stRender(); }
   if(a==='st-canc'){ st.showCancelled = !st.showCancelled; return stRender(); }
   if(a==='st-fy'){ st.fy = v; return stRender(); }
@@ -2484,9 +2725,12 @@ document.addEventListener('click', ev=>{
   if(a==='st-icopy'){ const i = st.invoices.find(x=>x.id===v); if(i) stCopy(stInvLink(i)); return; }
   if(a==='st-iview'){ const i = st.invoices.find(x=>x.id===v); if(i) go('i', i.token); return; }
   if(a==='st-irem') return run(async()=>{ const r = await q(sb.rpc('send_invoice_email', {p_invoice:v, p_kind:'reminder'})); await stReload(r==='sent' ? 'Reminder sent' : String(r||'Could not send the reminder.')); });
-  if(a==='st-ipaid') return run(async()=>{ await q(sb.from('invoices').update({status:'paid'}).eq('id', v)); await stReload('Marked as paid'); });
+  if(a==='st-ipaid') return run(async()=>{ const patch = {status:'paid'};
+    if(stExtra()){ const i = st.invoices.find(x=>x.id===v), inp = $('stTds-' + v), t = stInt(inp ? inp.value : 0);
+      if(i && t > (i.total||0)) return toast('TDS cannot be more than the invoice total.'); patch.tds = t; }
+    await q(sb.from('invoices').update(patch).eq('id', v)); await stReload('Marked as paid'); });
   if(a==='st-iunpaid') return run(async()=>{ await q(sb.from('invoices').update({status:'sent'}).eq('id', v)); await stReload('Marked as not paid'); });
-  if(a==='st-csv'){ const blob = new Blob([stCSV(v)], {type:'text/csv;charset=utf-8'}); const u = URL.createObjectURL(blob); const l = document.createElement('a'); l.href = u; l.download = 'boli-earnings-' + v + '.csv'; document.body.appendChild(l); l.click(); l.remove(); setTimeout(()=>URL.revokeObjectURL(u), 1000); return; }
+  if(a==='st-csv'){ stDownload(stCSV(v), 'boli-earnings-' + v + '.csv'); return; }
   if(a==='st-econv') return run(async()=>{ const e = st.enquiries.find(x=>x.id===v); if(!e) return;
     const row = await q(sb.from('collabs').insert({creator_id:S.user.id, source:'enquiry', enquiry_id:e.id, status:'lead', brand_name:e.brand_name, contact_name:e.contact_name||null, brand_email:e.email||null, brand_phone:e.phone||null, fee:e.budget||0, title:String(e.message||'Enquiry').slice(0,60)}).select().single());
     await q(sb.from('enquiries').update({status:'converted', collab_id:row.id}).eq('id', e.id));
@@ -2507,20 +2751,46 @@ document.addEventListener('click', ev=>{
     if(kind==='collab'){ await q(sb.from('collabs').delete().eq('id', id)); return stReload('Collaboration deleted'); }
     if(kind==='void'){ await q(sb.from('invoices').update({status:'void'}).eq('id', id)); return stReload('Invoice voided'); }
     if(kind==='enq'){ await q(sb.from('enquiries').delete().eq('id', id)); return stReload('Enquiry deleted'); }
+    if(kind==='exp'){ const x = st.expenses.find(y=>y.id===id); await q(sb.from('expenses').delete().eq('id', id));
+      if(x && x.receipt_path){ try{ await sb.storage.from('receipts').remove([x.receipt_path]); }catch(e){} }
+      return stReload('Expense deleted'); }
     if(kind==='avoid' && id){ await q(sb.from('agreements').update({status:'void'}).eq('id', id)); st.mode = null; return stReload('Agreement voided'); } });
 });
 document.addEventListener('submit', ev=>{
-  const id = ev.target.id; if(id!=='stCollabForm' && id!=='stInvForm' && id!=='stAgrForm') return; ev.preventDefault();
+  const id = ev.target.id; if(!['stCollabForm','stInvForm','stAgrForm','stExpForm','stRateForm'].includes(id)) return; ev.preventDefault();
   const st = stS();
   if(id==='stCollabForm') return run(async()=>{
     const e = st.edit.collab || {}, p = stCollabPayload(e), err = $('stcErr');
-    const bad = !p.brand_name ? 'Add the brand name.' : !p.title ? 'Say what the deal is.' : (p.brand_email && !ST_EMAIL.test(p.brand_email)) ? 'Check the brand email.' : '';
+    const bad = !p.brand_name ? 'Add the brand name.' : !p.title ? 'Say what the deal is.' : (p.brand_email && !ST_EMAIL.test(p.brand_email)) ? 'Check the brand email.' : (p.tds && p.tds > p.fee) ? 'TDS cannot be more than the fee.' : '';
     if(bad){ if(err){ err.textContent = bad; err.hidden = false; } return; }
     if(e.id) await q(sb.from('collabs').update(p).eq('id', e.id)); else await q(sb.from('collabs').insert({creator_id:S.user.id, ...p}));
     st.mode = null; st.edit.collab = null; await stReload(e.id ? 'Collaboration saved' : 'Collaboration added');
   });
   if(id==='stInvForm') return run(async()=>{ const row = await stInvSave(); if(!row) return; st.mode = null; st.edit.inv = null; await stReload('Draft saved'); });
   if(id==='stAgrForm') return run(async()=>{ const row = await stAgrSave(); if(!row) return; await stLoad(); stRender(); toast('Draft saved'); });
+  if(id==='stExpForm') return run(async()=>{
+    const e = st.edit.exp || {}, err = $('stxErr'), fileEl = $('stExpFile'), file = fileEl && fileEl.files && fileEl.files[0];
+    const amount = stInt(e.amount), show = m => { if(err){ err.textContent = m; err.hidden = false; } else toast(m); };
+    if(!e.spent_on) return show('Add the date.');
+    if(!ST_EXPCAT.some(c=>c[0]===e.category)) return show('Pick a category.');
+    if(!(amount > 0)) return show('Add the amount.');
+    if(e.note && String(e.note).length > 200) return show('Keep the note under 200 characters.');
+    if(file && !ST_RECEIPT_TYPES[file.type]) return show('Receipts can be a JPG, PNG, WebP or PDF.');
+    if(file && file.size > 5*1024*1024) return show('The receipt is larger than 5 MB.');
+    const old = e.receipt_path || null; let path = e.removeReceipt ? null : old;
+    if(file){ const p = S.user.id + '/' + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) + '.' + ST_RECEIPT_TYPES[file.type];
+      const up = await sb.storage.from('receipts').upload(p, file, {contentType:file.type}); if(up.error) throw new Error('Could not upload the receipt. Please try again.'); path = p; }
+    const payload = {spent_on:e.spent_on, category:e.category, amount, note:stTxt(e.note), receipt_path:path};
+    if(e.id) await q(sb.from('expenses').update(payload).eq('id', e.id)); else await q(sb.from('expenses').insert({creator_id:S.user.id, ...payload}));
+    if(old && old!==path){ try{ await sb.storage.from('receipts').remove([old]); }catch(x){} }
+    st.mode = null; st.edit.exp = null; await stReload(e.id ? 'Expense saved' : 'Expense added');
+  });
+  if(id==='stRateForm') return run(async()=>{
+    const p = stRatePayload(st.edit.rate || {}), err = $('strErr');
+    if(p.note && p.note.length > 300){ if(err){ err.textContent = 'Keep the note under 300 characters.'; err.hidden = false; } return; }
+    await q(sb.from('rate_cards').upsert({creator_id:S.user.id, ...p}, {onConflict:'creator_id'}));
+    st.edit.rate = null; await stReload('Rate card saved');
+  });
 });
 </script>
 
@@ -2894,6 +3164,317 @@ document.addEventListener('submit', ev=>{
     if(r.error || r.data === false) return showErr(r.error ? (r.error.message || 'Could not send. Please try again.') : 'This creator is not taking enquiries right now.');
     e.sent = true; e.open = false; pbEnqRefresh();
   });
+});
+</script>
+
+<!-- part_community -->
+<style>
+.cm-rep{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:.84rem;color:var(--muted)}
+.cm-rep b{color:var(--ink);font-weight:700}
+.cm-rep .cm-star{color:#e8a10c}
+.cm-rate{border:1.5px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.cm-q{display:flex;flex-direction:column;gap:6px}
+.cm-stars{display:flex;gap:4px;flex-wrap:wrap}
+.cm-stars button{border:1px solid var(--line);background:var(--surface);border-radius:12px;width:40px;height:40px;font-size:1.15rem;line-height:1;color:var(--muted)}
+.cm-stars button[aria-pressed="true"]{background:#fff4d6;border-color:#e8a10c;color:#b07400}
+.cm-stars button:focus-visible,.cm-pills button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cm-pills{display:flex;gap:8px;flex-wrap:wrap}
+.cm-tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+.cm-tabs .cm-badge{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;margin-left:6px;border-radius:999px;background:var(--accent);color:var(--on-accent);font-size:.72rem;font-weight:700}
+.cm-search{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:11px 18px;width:100%;max-width:420px}
+.cm-filters{display:flex;flex-direction:column;gap:10px}
+.cm-fg{display:flex;flex-direction:column;gap:6px;min-width:0}
+.cm-fg > span{font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.cm-fg .chips{flex-wrap:nowrap}
+.cm-list{display:grid;grid-template-columns:1fr;gap:14px}
+@media (min-width:820px){ .cm-list{grid-template-columns:repeat(2,minmax(0,1fr))} }
+.cm-card{background:var(--surface);border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.cm-head{display:flex;gap:12px;align-items:center;min-width:0}
+.cm-head > div{min-width:0}
+.cm-head .av{flex:none;width:44px;height:44px;border-radius:50%;background:linear-gradient(160deg,var(--hue,var(--h-home)),color-mix(in oklab,var(--hue,var(--h-home)) 45%,var(--cover-deep)));color:var(--cover-ink);display:grid;place-items:center;font-family:var(--display);font-weight:700}
+.cm-head b{overflow-wrap:anywhere}
+.cm-tags{display:flex;gap:6px;flex-wrap:wrap}
+.cm-note{background:var(--bg);border-radius:12px;padding:10px 12px;font-size:.92rem;overflow-wrap:anywhere}
+.cm-acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cm-msg{display:flex;flex-direction:column;gap:8px}
+.cm-msg textarea,.cm-rate textarea{width:100%}
+.cm-req{background:var(--surface);border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.cm-req p{overflow-wrap:anywhere}
+.cm-err{color:var(--accent);font-size:.88rem}
+.cm-count{font-variant-numeric:tabular-nums}
+</style>
+<script>
+/* ---------- community: brand reputation, brand rating, collab finder ---------- */
+function cmS(){
+  if(!S.cm) S.cm = {tab:'find', q:'', city:'', cat:'', lang:'', fol:'', results:null, loading:false, cities:[], reqs:[], people:{}, contacts:{}, open:null, draft:'', confirm:null, err:'', rate:{}, rated:{}, rqErr:''};
+  return S.cm;
+}
+const CM_FOL = [['', 'Any size'], ['1-10', '1k to 10k'], ['10-50', '10k to 50k'], ['50+', '50k+']];
+const cmFolRange = k => k==='1-10' ? [1000, 10000] : k==='10-50' ? [10000, 50000] : k==='50+' ? [50000, null] : [0, null];
+const cmHandle = u => { const m = /instagram\.com\/([A-Za-z0-9._]{1,30})/i.exec(String(u||'')); return m ? m[1] : ''; };
+
+/* ----- brand reputation badge ----- */
+function brandRepHTML(rep){
+  if(!rep || !(Number(rep.count) > 0)) return '';
+  const n = Number(rep.count);
+  if(n < 3) return `<span class="cm-rep">New to ratings</span>`;
+  const vals = [rep.payment, rep.communication, rep.brief].map(Number).filter(v => isFinite(v) && v > 0);
+  if(!vals.length) return `<span class="cm-rep">New to ratings</span>`;
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const pay = Number(rep.payment);
+  const payTxt = pay >= 4.5 ? 'Pays on time' : pay >= 3.5 ? 'Usually pays on time' : '';
+  return `<span class="cm-rep" aria-label="Rated ${esc(mean.toFixed(1))} out of 5 by ${esc(num(n))} creators"><span class="cm-star" aria-hidden="true">★</span><b>${esc(mean.toFixed(1))}</b>${payTxt ? ` · ${esc(payTxt)}` : ''} <span>(${esc(num(n))} rating${n===1?'':'s'})</span></span>`;
+}
+
+/* ----- rate a brand after a paid Boli deal ----- */
+function cmStars(appId, key, cur, label){
+  return `<div class="cm-q" role="group" aria-label="${esc(label)}"><b>${esc(label)}</b><div class="cm-stars">${[1,2,3,4,5].map(n => `<button type="button" data-act="cm-star" data-v="${esc(appId)}" data-k="${key}" data-n="${n}" aria-pressed="${cur===n}" aria-label="${n} out of 5">${n<=(cur||0)?'★':'☆'}</button>`).join('')}</div></div>`;
+}
+function rateBrandHTML(app, brief){
+  if(!app || !app.id) return '';
+  const st = cmS();
+  if(st.rated[app.id]) return `<div class="cm-rate" id="cmRate-${esc(app.id)}"><b>Thanks for rating ${esc((brief && brief.brand_name) || 'this brand')}</b><span class="meta">Your rating helps other creators choose brands.</span></div>`;
+  const r = st.rate[app.id] || (st.rate[app.id] = {payment:0, communication:0, brief:0, again:null, comment:'', err:''});
+  const brand = (brief && brief.brand_name) || 'this brand';
+  return `<form class="cm-rate" id="cmRateForm" data-app="${esc(app.id)}" novalidate>
+    <b>How was working with ${esc(brand)}?</b>
+    ${cmStars(app.id, 'payment', r.payment, 'Payment on time')}
+    ${cmStars(app.id, 'communication', r.communication, 'Communication')}
+    ${cmStars(app.id, 'brief', r.brief, 'Clear brief')}
+    <div class="cm-q"><b>Would you work with them again?</b><div class="cm-pills">
+      <button type="button" class="pill" data-act="cm-again" data-v="${esc(app.id)}" data-n="yes" aria-pressed="${r.again===true}">Yes</button>
+      <button type="button" class="pill" data-act="cm-again" data-v="${esc(app.id)}" data-n="no" aria-pressed="${r.again===false}">No</button></div></div>
+    <label for="cmRateComment">Comment (optional)<textarea id="cmRateComment" rows="3" maxlength="500">${esc(r.comment)}</textarea></label>
+    <p class="meta">Only the Boli team sees comments. Brands see an average once 3 creators have rated them.</p>
+    <p class="cm-err" id="cmRateErr"${r.err?'':' hidden'}>${esc(r.err)}</p>
+    <div><button class="btn accent" type="submit">Submit rating</button></div>
+  </form>`;
+}
+function cmPaintStars(form, key, n){
+  form.querySelectorAll(`[data-act="cm-star"][data-k="${key}"]`).forEach(b => {
+    const v = Number(b.dataset.n); b.setAttribute('aria-pressed', v===n); b.textContent = v<=n ? '★' : '☆';
+  });
+}
+
+/* ----- collab finder ----- */
+async function cmLoadResults(){
+  const st = cmS(), [mn, mx] = cmFolRange(st.fol);
+  st.loading = true;
+  try{
+    const r = await sb.rpc('collab_creators', {p_city: st.city || null, p_cat: st.cat || null, p_lang: st.lang || null, p_min: mn, p_max: mx, p_q: st.q.trim() || null, p_limit: 60});
+    if(r.error) throw new Error(r.error.message);
+    st.results = Array.isArray(r.data) ? r.data : [];
+    st.results.forEach(c => { if(c.city && !st.cities.includes(c.city)) st.cities.push(c.city); });
+    st.cities.sort((a, b) => a.localeCompare(b));
+    st.err = '';
+  }catch(e){ st.results = st.results || []; st.err = 'Could not load creators. Try again in a moment.'; }
+  st.loading = false;
+}
+async function cmLoadReqs(){
+  const st = cmS(), uid = S.user.id;
+  const r = await sb.from('collab_requests').select('*').or(`from_id.eq.${uid},to_id.eq.${uid}`).order('created_at', {ascending:false});
+  if(r.error) throw new Error(r.error.message);
+  st.reqs = Array.isArray(r.data) ? r.data : [];
+  (st.results || []).forEach(c => { if(!st.people[c.id]) st.people[c.id] = {id:c.id, name:c.name, city:c.city, cats:c.cats, followers:c.followers, verified:c.verified}; });
+  const ids = [...new Set(st.reqs.map(x => x.from_id===uid ? x.to_id : x.from_id))].filter(id => !st.people[id]);
+  if(ids.length){
+    const p = await sb.from('profiles').select('id,name,city,cats,followers,verified').in('id', ids);
+    if(!p.error && Array.isArray(p.data)) p.data.forEach(x => { st.people[x.id] = x; });
+  }
+  const acc = st.reqs.filter(x => x.status==='accepted' && !st.contacts[x.id]);
+  await Promise.all(acc.map(x => Promise.resolve(sb.rpc('collab_contact', {p_request: x.id})).then(c => { st.contacts[x.id] = c && !c.error ? (c.data || null) : null; }, () => { st.contacts[x.id] = null; })));
+}
+async function openCollabs(){
+  if(!S.user || !isCreator()){ S.view = 'home'; S.arg = null; render(); return; }
+  const st = cmS();
+  st.confirm = null; st.rqErr = '';
+  S.view = 'collabs'; S.arg = null;
+  if(st.results===null) render();
+  await Promise.all([cmLoadResults(), cmLoadReqs().catch(() => {})]);
+  if(S.view!=='collabs') return;
+  render(); window.scrollTo(0, 0);
+}
+function cmRelation(id){
+  const st = cmS(), uid = S.user && S.user.id;
+  return st.reqs.find(x => ((x.from_id===uid && x.to_id===id) || (x.to_id===uid && x.from_id===id)) && x.status!=='declined') || null;
+}
+function cmCard(c){
+  const st = cmS(), rel = cmRelation(c.id), key = c.handle || c.id;
+  const place = [c.city, c.area].filter(Boolean).map(esc).join(' · ');
+  const cats = (c.cats || []).map(k => CATS[k] || k).filter(Boolean);
+  const langs = (c.langs || []).filter(Boolean);
+  let act = '';
+  if(rel && rel.status==='accepted') act = `<span class="tag ok">Connected</span><button class="pill" data-act="cm-tab" data-v="requests">See contact</button>`;
+  else if(rel && rel.from_id===S.user.id) act = `<span class="tag">Request sent</span>`;
+  else if(rel) act = `<span class="tag">Wants to collaborate</span><button class="pill" data-act="cm-tab" data-v="requests">Reply</button>`;
+  else act = `<button class="pill" data-act="cm-req" data-v="${esc(c.id)}" aria-expanded="${st.open===c.id}" aria-pressed="${st.open===c.id}">Send request</button>`;
+  const form = !rel && st.open===c.id ? `<form class="cm-msg" id="cmReqForm" data-to="${esc(c.id)}" novalidate>
+      <label for="cmMsg">Your message<textarea id="cmMsg" rows="3" maxlength="500" placeholder="Say hello and suggest an idea, e.g. a food walk in Dadar together">${esc(st.draft)}</textarea></label>
+      <p class="meta"><span class="cm-count" id="cmMsgCount">${st.draft.trim().length}</span>/500. They see your name, city, niches and followers. Instagram handles are shared only if they accept.</p>
+      <p class="cm-err" id="cmReqErr"${st.rqErr?'':' hidden'}>${esc(st.rqErr)}</p>
+      <div class="cm-acts"><button class="btn accent" type="submit">Send</button><button type="button" class="link" data-act="cm-req-cancel">Cancel</button></div>
+    </form>` : '';
+  return `<article class="cm-card t-${hue((c.cats||[])[0])}">
+    <div class="cm-head"><span class="av" aria-hidden="true">${esc(ini(c.name))}</span><div><b>${esc(c.name)}</b>${vtag(c)}<br><span class="meta">${place || '&nbsp;'}</span></div></div>
+    <div class="cm-tags">${c.local_focus ? `<span class="tag">Local page: ${esc(c.local_focus)}</span>` : ''}${cats.map(t => `<span class="tag ok">${esc(t)}</span>`).join('')}</div>
+    <span class="meta">${esc(num(c.followers))} followers${langs.length ? ' · ' + langs.map(esc).join(', ') : ''}</span>
+    ${c.collab_note ? `<p class="cm-note">${esc(c.collab_note)}</p>` : ''}
+    <div class="cm-acts"><button class="pill" data-act="cm-view" data-v="${esc(key)}">View profile</button>${act}</div>
+    ${form}
+  </article>`;
+}
+function cmListHTML(){
+  const st = cmS();
+  if(st.results===null) return `<p class="meta">Loading creators…</p>`;
+  if(st.err && !st.results.length) return `<p class="cm-err">${esc(st.err)}</p>`;
+  if(!st.results.length){
+    const any = st.q || st.city || st.cat || st.lang || st.fol;
+    return `<div class="panel"><b>${any ? 'No creators match these filters' : 'No other creators are open to collaborations yet'}</b><p class="meta">${any ? 'Try another city or niche, or clear the filters.' : 'As more creators join Boli and switch this on, they will appear here.'}</p>${any ? '<div><button class="pill" data-act="cm-clear">Clear search and filters</button></div>' : ''}</div>`;
+  }
+  return `<p class="meta">${num(st.results.length)} creator${st.results.length===1?'':'s'} open to collaborations</p><div class="cm-list">${st.results.map(cmCard).join('')}</div>`;
+}
+function cmFilterGroup(label, f, opts){
+  const st = cmS();
+  return `<div class="cm-fg"><span>${esc(label)}</span><div class="chips">${opts.map(([v, t]) => `<button class="pill" data-act="cm-flt" data-f="${f}" data-v="${esc(v)}" aria-pressed="${st[f]===v}">${esc(t)}</button>`).join('')}</div></div>`;
+}
+function cmFind(){
+  const st = cmS();
+  const cities = [...new Set([...(st.city ? [st.city] : []), ...st.cities])];
+  return `<div class="sec">
+    <input class="cm-search" id="cmQ" type="search" value="${esc(st.q)}" placeholder="Search by name, city, area or kind of collab" aria-label="Search creators" autocomplete="off">
+    <div class="cm-filters">
+      ${cmFilterGroup('City', 'city', [['', 'Anywhere'], ...cities.map(c => [c, c])])}
+      ${cmFilterGroup('Niche', 'cat', [['', 'All'], ...Object.entries(CATS)])}
+      ${cmFilterGroup('Language', 'lang', [['', 'Any'], ...LANGS.map(l => [l, l])])}
+      ${cmFilterGroup('Followers', 'fol', CM_FOL)}
+    </div>
+    <div id="cmList">${cmListHTML()}</div>
+  </div>`;
+}
+function cmPerson(id){
+  const p = cmS().people[id] || {};
+  const cats = (p.cats || []).map(k => CATS[k] || k).filter(Boolean);
+  return {name: p.name || 'A creator', line: [p.city, cats.join(', '), p.followers!=null ? num(p.followers) + ' followers' : ''].filter(Boolean).map(esc).join(' · '), p};
+}
+function cmContact(rid){
+  const c = cmS().contacts[rid];
+  if(!c) return `<p class="meta">Their Instagram will appear here. If it does not, open Collabs again in a moment.</p>`;
+  const h = cmHandle(c.instagram), u = url(c.instagram);
+  return `<p><span class="tag ok">Connected</span> ${u && h ? `<a class="link" href="${esc(u)}" target="_blank" rel="noopener noreferrer">Instagram: @${esc(h)}</a>` : '<span class="meta">Instagram link not available</span>'}</p><p class="meta">Message ${esc(c.name || 'them')} on Instagram to plan your collab.</p>`;
+}
+function cmReqCard(x, dir){
+  const st = cmS(), other = dir==='in' ? x.from_id : x.to_id, who = cmPerson(other);
+  const when = x.created_at ? new Date(x.created_at).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'}) : '';
+  let acts = '';
+  if(x.status==='pending' && dir==='in') acts = `<div class="cm-acts"><button class="pill" aria-pressed="true" data-act="cm-accept" data-v="${esc(x.id)}">Accept</button><button class="pill" data-act="cm-decline" data-v="${esc(x.id)}">Decline</button></div>`;
+  else if(x.status==='pending' && dir==='out') acts = st.confirm===x.id
+    ? `<div class="cm-acts"><span class="meta">Withdraw this request?</span><button class="pill" aria-pressed="true" data-act="cm-withdraw-yes" data-v="${esc(x.id)}">Yes, withdraw</button><button class="link" data-act="cm-withdraw-no">Keep it</button></div>`
+    : `<div class="cm-acts"><span class="tag">Waiting for a reply</span><button class="pill" data-act="cm-withdraw" data-v="${esc(x.id)}">Withdraw</button></div>`;
+  else if(x.status==='accepted') acts = cmContact(x.id);
+  else acts = `<span class="meta">${dir==='in' ? 'You declined this request.' : 'They could not take this up right now.'}</span>`;
+  return `<div class="cm-req"><div class="cm-head"><span class="av t-${hue(((who.p.cats||[])[0]))}" aria-hidden="true">${esc(ini(who.name))}</span><div><b>${esc(who.name)}</b>${vtag(who.p)}<br><span class="meta">${who.line || '&nbsp;'}</span></div></div>
+    <p class="cm-note">${esc(x.message)}</p><span class="meta">${dir==='in' ? 'Sent to you' : 'You sent this'}${when ? ' on ' + esc(when) : ''}</span>${acts}</div>`;
+}
+function cmRequests(){
+  const st = cmS(), uid = S.user.id;
+  const inc = st.reqs.filter(x => x.to_id===uid && x.status!=='declined');
+  const out = st.reqs.filter(x => x.from_id===uid && x.status!=='declined');
+  const old = st.reqs.filter(x => x.status==='declined');
+  const sec = (t, list, dir, empty) => `<div class="sec"><h3>${t}</h3>${list.length ? list.map(x => cmReqCard(x, dir || (x.to_id===uid ? 'in' : 'out'))).join('') : `<p class="meta">${empty}</p>`}</div>`;
+  return sec('Incoming', inc, 'in', 'No requests yet. Creators who want to work with you will appear here.')
+    + sec('Sent', out, 'out', 'Requests you send from Find creators appear here.')
+    + (old.length ? sec('Older', old, null, '') : '');
+}
+function vCollabs(){
+  if(!S.user || !isCreator()) return `<p class="meta">Collabs are for creators.</p>`;
+  const st = cmS(), uid = S.user.id;
+  const pend = st.reqs.filter(x => x.to_id===uid && x.status==='pending').length;
+  const banner = S.me && S.me.collab_open ? '' : `<div class="lock"><b>Turn on 'Open to collaborations' in your profile so others can find you.</b><div><button class="btn" data-act="nav" data-v="profile">Edit profile</button></div></div>`;
+  return `<div class="sec"><span class="eyebrow">Collabs</span><h1 style="font-size:clamp(1.8rem,5vw,2.4rem)">Find creators to collaborate with</h1>
+    <p class="meta">Joint posts help both of you reach new people. Send a short note; if they accept, you both see each other's Instagram.</p>
+    ${banner}
+    <div class="cm-tabs" role="tablist"><button class="pill" role="tab" data-act="cm-tab" data-v="find" aria-pressed="${st.tab==='find'}" aria-selected="${st.tab==='find'}">Find creators</button><button class="pill" role="tab" data-act="cm-tab" data-v="requests" aria-pressed="${st.tab==='requests'}" aria-selected="${st.tab==='requests'}">Requests${pend ? `<span class="cm-badge" aria-label="${pend} new">${pend}</span>` : ''}</button></div>
+    ${st.tab==='requests' ? cmRequests() : cmFind()}
+  </div>`;
+}
+function cmRerender(){ const y = window.scrollY; render(); window.scrollTo(0, y); }
+let cmTimer = null;
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act^="cm-"]'); if(!el || el.disabled) return;
+  const a = el.dataset.act, v = el.dataset.v, st = cmS();
+  if(a==='cm-star'){
+    const r = st.rate[v] || (st.rate[v] = {payment:0, communication:0, brief:0, again:null, comment:'', err:''});
+    const k = el.dataset.k, n = Number(el.dataset.n);
+    if(!['payment','communication','brief'].includes(k) || !(n>=1 && n<=5)) return;
+    r[k] = n; const f = el.closest('form'); if(f) cmPaintStars(f, k, n); return;
+  }
+  if(a==='cm-again'){
+    const r = st.rate[v] || (st.rate[v] = {payment:0, communication:0, brief:0, again:null, comment:'', err:''});
+    r.again = el.dataset.n==='yes';
+    el.parentElement.querySelectorAll('[data-act="cm-again"]').forEach(b => b.setAttribute('aria-pressed', b===el)); return;
+  }
+  if(a==='cm-tab'){ st.tab = v==='requests' ? 'requests' : 'find'; st.confirm = null; st.open = null; st.rqErr = ''; if(S.view!=='collabs') return go('collabs'); window.scrollTo(0,0); return render(); }
+  if(a==='cm-view') return go('c', v);
+  if(a==='cm-flt'){
+    const f = el.dataset.f; if(!['city','cat','lang','fol'].includes(f)) return;
+    st[f] = v || ''; st.open = null;
+    return run(async () => { cmRerender(); await cmLoadResults(); if(S.view==='collabs') cmRerender(); });
+  }
+  if(a==='cm-clear'){ st.q = ''; st.city = ''; st.cat = ''; st.lang = ''; st.fol = ''; return run(async () => { cmRerender(); await cmLoadResults(); if(S.view==='collabs') cmRerender(); }); }
+  if(a==='cm-req'){ st.open = st.open===v ? null : v; st.draft = ''; st.rqErr = ''; cmRerender(); const t = $('cmMsg'); if(t) t.focus(); return; }
+  if(a==='cm-req-cancel'){ st.open = null; st.draft = ''; st.rqErr = ''; return cmRerender(); }
+  if(a==='cm-accept' || a==='cm-decline') return run(async () => {
+    await q(sb.from('collab_requests').update({status: a==='cm-accept' ? 'accepted' : 'declined'}).eq('id', v));
+    await cmLoadReqs(); cmRerender(); toast(a==='cm-accept' ? 'Request accepted' : 'Request declined');
+  });
+  if(a==='cm-withdraw'){ st.confirm = v; return cmRerender(); }
+  if(a==='cm-withdraw-no'){ st.confirm = null; return cmRerender(); }
+  if(a==='cm-withdraw-yes') return run(async () => {
+    await q(sb.from('collab_requests').delete().eq('id', v));
+    st.confirm = null; await cmLoadReqs(); cmRerender(); toast('Request withdrawn');
+  });
+});
+document.addEventListener('input', e => {
+  const id = e.target.id, st = cmS();
+  if(id==='cmQ'){
+    st.q = e.target.value; clearTimeout(cmTimer);
+    cmTimer = setTimeout(async () => { await cmLoadResults(); const l = $('cmList'); if(l && S.view==='collabs') l.innerHTML = cmListHTML(); }, 350);
+  } else if(id==='cmMsg'){
+    st.draft = e.target.value; const c = $('cmMsgCount'); if(c) c.textContent = st.draft.trim().length;
+  } else if(id==='cmRateComment'){
+    const f = e.target.closest('form'), app = f && f.dataset.app; if(!app) return;
+    const r = st.rate[app] || (st.rate[app] = {payment:0, communication:0, brief:0, again:null, comment:'', err:''}); r.comment = e.target.value;
+  }
+});
+document.addEventListener('submit', e => {
+  const f = e.target, st = cmS();
+  if(f.id==='cmReqForm'){
+    e.preventDefault();
+    const to = f.dataset.to, msg = (st.draft || '').trim();
+    const showErr = m => { st.rqErr = m; const p = $('cmReqErr'); if(p){ p.textContent = m; p.hidden = false; } };
+    if(msg.length < 10) return showErr('Write at least 10 characters so they know what you have in mind.');
+    if(msg.length > 500) return showErr('Keep it under 500 characters.');
+    return run(async () => {
+      await q(sb.from('collab_requests').insert({from_id: S.user.id, to_id: to, message: msg}));
+      st.open = null; st.draft = ''; st.rqErr = '';
+      await cmLoadReqs(); cmRerender(); toast('Request sent');
+    });
+  }
+  if(f.id==='cmRateForm'){
+    e.preventDefault();
+    const app = f.dataset.app, r = st.rate[app] || {};
+    const fail = m => { r.err = m; const p = $('cmRateErr'); if(p){ p.textContent = m; p.hidden = false; } };
+    if(!(r.payment>=1 && r.communication>=1 && r.brief>=1)) return fail('Pick a star rating for all three questions.');
+    if(r.again!==true && r.again!==false) return fail('Tell us if you would work with them again.');
+    const comment = String(r.comment || '').trim().slice(0, 500);
+    return run(async () => {
+      await q(sb.from('brand_ratings').insert({application_id: app, payment: r.payment, communication: r.communication, brief: r.brief, again: r.again, comment: comment || null}));
+      if(!(S.myRatings instanceof Set)) S.myRatings = new Set(S.myRatings ? [...S.myRatings] : []);
+      S.myRatings.add(app); st.rated[app] = true; delete st.rate[app];
+      cmRerender(); toast('Thanks for rating');
+    });
+  }
 });
 </script>
 
